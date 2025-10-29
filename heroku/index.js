@@ -85,16 +85,19 @@ app.get("/privacy-policy", function (req, res) {
   `);
 });
 
-app.get(["/facebook", "/instagram", "/threads"], function (req, res) {
-	if (
-		req.query["hub.mode"] == "subscribe" &&
-		req.query["hub.verify_token"] == token
-	) {
-		res.send(req.query["hub.challenge"]);
-	} else {
-		res.sendStatus(400);
+app.get(
+	["/facebook", "/instagram", "/threads", "/whatsapp"],
+	function (req, res) {
+		if (
+			req.query["hub.mode"] == "subscribe" &&
+			req.query["hub.verify_token"] == token
+		) {
+			res.send(req.query["hub.challenge"]);
+		} else {
+			res.sendStatus(400);
+		}
 	}
-});
+);
 
 app.post("/facebook", function (req, res) {
 	console.log("Facebook request body:", req.body);
@@ -125,6 +128,14 @@ app.post("/threads", function (req, res) {
 	console.log("Threads request body:");
 	console.log(req.body);
 	// Process the Threads updates here
+	received_updates.unshift(req.body);
+	res.sendStatus(200);
+});
+
+app.post("/whatsapp", function (req, res) {
+	console.log("WhatsApp request body:");
+	console.log(JSON.stringify(req.body, null, 2));
+	// Process the WhatsApp updates here
 	received_updates.unshift(req.body);
 	res.sendStatus(200);
 });
