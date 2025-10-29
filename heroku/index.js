@@ -10,6 +10,7 @@ var bodyParser = require("body-parser");
 var express = require("express");
 var app = express();
 var xhub = require("express-x-hub");
+var axios = require("axios");
 
 app.set("port", process.env.PORT || 5000);
 app.listen(app.get("port"));
@@ -19,6 +20,73 @@ app.use(bodyParser.json());
 
 var token = process.env.TOKEN || "token";
 var received_updates = [];
+
+// OpenAI API Configuration
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
+const INSTAGRAM_ACCOUNT_ID = process.env.INSTAGRAM_ACCOUNT_ID;
+
+// Function to get OpenAI response
+async function getOpenAIResponse(userMessage) {
+	try {
+		const response = await axios.post(
+			"https://api.openai.com/v1/chat/completions",
+			{
+				model: "gpt-3.5-turbo",
+				messages: [
+					{
+						role: "system",
+						content: "You are a helpful assistant responding to Instagram messages. Be friendly, concise, and helpful."
+					},
+					{
+						role: "user",
+						content: userMessage
+					}
+				],
+				max_tokens: 500,
+				temperature: 0.7
+			},
+			{
+				headers: {
+					"Authorization": `Bearer ${OPENAI_API_KEY}`,
+					"Content-Type": "application/json"
+				}
+			}
+		);
+		return response.data.choices[0].message.content;
+	} catch (error) {
+		console.error("OpenAI API Error:", error.response?.data || error.message);
+		return "Sorry, I'm having trouble processing your message right now. Please try again later.";
+	}
+}
+
+// Function to send Instagram message
+async function sendInstagramMessage(recipientId, messageText) {
+	try {
+		const response = await axios.post(
+			`https://graph.facebook.com/v21.0/${INSTAGRAM_ACCOUNT_ID}/messages`,
+			{
+				recipient: {
+					id: recipientId
+				},
+				message: {
+					text: messageText
+				}
+			},
+			{
+				headers: {
+					"Authorization": `Bearer ${INSTAGRAM_ACCESS_TOKEN}`,
+					"Content-Type": "application/json"
+				}
+			}
+		);
+		console.log("Instagram message sent successfully:", response.data);
+		return response.data;
+	} catch (error) {
+		console.error("Instagram Send API Error:", error.response?.data || error.message);
+		throw error;
+	}
+}
 
 app.get("/", function (req, res) {
 	console.log(req);
@@ -116,12 +184,43 @@ app.post("/facebook", function (req, res) {
 	res.sendStatus(200);
 });
 
-app.post("/instagram", function (req, res) {
+app.post("/instagram", async function (req, res) {
 	console.log("Instagram request body:");
-	console.log(req.body);
-	// Process the Instagram updates here
+	console.log(JSON.stringify(req.body, null, 2));
+	
+	// Store the received update
 	received_updates.unshift(req.body);
+	
+	// Respond to webhook immediately (required by Meta)
 	res.sendStatus(200);
+	
+	// Process the message asynchronously
+	try {
+		if (req.body.object === "instagram") {
+			for (const entry of req.body.entry) {
+				if (entry.messaging) {
+					for (const messagingEvent of entry.messaging) {
+						// Check if it's an incoming message (not an echo)
+						if (messagingEvent.message && messagingEvent.message.text && !messagingEvent.message.is_echo) {
+							const senderId = messagingEvent.sender.id;
+							const userMessage = messagingEvent.message.text;
+							
+							console.log(`Received message from ${senderId}: ${userMessage}`);
+							
+							// Get AI response
+							const aiResponse = await getOpenAIResponse(userMessage);
+							console.log(`AI Response: ${aiResponse}`);
+							
+							// Send reply to Instagram
+							await sendInstagramMessage(senderId, aiResponse);
+						}
+					}
+				}
+			}
+		}
+	} catch (error) {
+		console.error("Error processing Instagram message:", error);
+	}
 });
 
 app.post("/threads", function (req, res) {
