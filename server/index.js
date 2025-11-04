@@ -6,6 +6,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+require("dotenv").config();
+
 var bodyParser = require("body-parser");
 var express = require("express");
 var app = express();
@@ -18,44 +20,62 @@ app.listen(app.get("port"));
 app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
 app.use(bodyParser.json());
 
-var token = process.env.TOKEN || "token";
+var token = process.env.INSTAGRAM_ACCESS_TOKEN || "token";
 var received_updates = [];
 
 // OpenAI API Configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5";
 const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
 const INSTAGRAM_ACCOUNT_ID = process.env.INSTAGRAM_ACCOUNT_ID;
 
 // Function to get OpenAI response
 async function getOpenAIResponse(userMessage) {
 	try {
+		console.log(`\n🤖 Sending to OpenAI (${OPENAI_MODEL})...`);
+		console.log(`📝 User message: "${userMessage}"`);
+
+		const requestBody = {
+			model: OPENAI_MODEL,
+			messages: [
+				{
+					role: "system",
+					content:
+						"You are a helpful assistant responding to Instagram messages. Be friendly, concise, and helpful.",
+				},
+				{
+					role: "user",
+					content: userMessage,
+				},
+			],
+			max_tokens: 500,
+		};
+
+		// Only add temperature if not using o1 models
+		if (!OPENAI_MODEL.startsWith('o1')) {
+			requestBody.temperature = 0.7;
+		}
+
 		const response = await axios.post(
 			"https://api.openai.com/v1/chat/completions",
-			{
-				model: "gpt-3.5-turbo",
-				messages: [
-					{
-						role: "system",
-						content: "You are a helpful assistant responding to Instagram messages. Be friendly, concise, and helpful."
-					},
-					{
-						role: "user",
-						content: userMessage
-					}
-				],
-				max_tokens: 500,
-				temperature: 0.7
-			},
+			requestBody,
 			{
 				headers: {
-					"Authorization": `Bearer ${OPENAI_API_KEY}`,
-					"Content-Type": "application/json"
-				}
+					Authorization: `Bearer ${OPENAI_API_KEY}`,
+					"Content-Type": "application/json",
+				},
 			}
 		);
-		return response.data.choices[0].message.content;
+
+		const aiResponse = response.data.choices[0].message.content;
+		console.log(`\n✅ OpenAI Response:\n${aiResponse}\n`);
+
+		return aiResponse;
 	} catch (error) {
-		console.error("OpenAI API Error:", error.response?.data || error.message);
+		console.error(
+			"\n❌ OpenAI API Error:",
+			error.response?.data || error.message
+		);
 		return "Sorry, I'm having trouble processing your message right now. Please try again later.";
 	}
 }
@@ -67,23 +87,26 @@ async function sendInstagramMessage(recipientId, messageText) {
 			`https://graph.facebook.com/v21.0/${INSTAGRAM_ACCOUNT_ID}/messages`,
 			{
 				recipient: {
-					id: recipientId
+					id: recipientId,
 				},
 				message: {
-					text: messageText
-				}
+					text: messageText,
+				},
 			},
 			{
 				headers: {
-					"Authorization": `Bearer ${INSTAGRAM_ACCESS_TOKEN}`,
-					"Content-Type": "application/json"
-				}
+					Authorization: `Bearer ${INSTAGRAM_ACCESS_TOKEN}`,
+					"Content-Type": "application/json",
+				},
 			}
 		);
 		console.log("Instagram message sent successfully:", response.data);
 		return response.data;
 	} catch (error) {
-		console.error("Instagram Send API Error:", error.response?.data || error.message);
+		console.error(
+			"Instagram Send API Error:",
+			error.response?.data || error.message
+		);
 		throw error;
 	}
 }
@@ -187,13 +210,13 @@ app.post("/facebook", function (req, res) {
 app.post("/instagram", async function (req, res) {
 	console.log("Instagram request body:");
 	console.log(JSON.stringify(req.body, null, 2));
-	
+
 	// Store the received update
 	received_updates.unshift(req.body);
-	
+
 	// Respond to webhook immediately (required by Meta)
 	res.sendStatus(200);
-	
+
 	// Process the message asynchronously
 	try {
 		if (req.body.object === "instagram") {
@@ -201,18 +224,52 @@ app.post("/instagram", async function (req, res) {
 				if (entry.messaging) {
 					for (const messagingEvent of entry.messaging) {
 						// Check if it's an incoming message (not an echo)
-						if (messagingEvent.message && messagingEvent.message.text && !messagingEvent.message.is_echo) {
+						if (
+							messagingEvent.message &&
+							messagingEvent.message.text &&
+							!messagingEvent.message.is_echo
+						) {
 							const senderId = messagingEvent.sender.id;
+							const recipientId = messagingEvent.recipient.id;
 							const userMessage = messagingEvent.message.text;
-							
-							console.log(`Received message from ${senderId}: ${userMessage}`);
-							
-							// Get AI response
-							const aiResponse = await getOpenAIResponse(userMessage);
-							console.log(`AI Response: ${aiResponse}`);
-							
-							// Send reply to Instagram
-							await sendInstagramMessage(senderId, aiResponse);
+
+							console.log(`\n📨 New Instagram Message:`);
+							console.log(`   From: ${senderId}`);
+							console.log(`   To: ${recipientId}`);
+							console.log(`   Message: "${userMessage}"`);
+
+							// Only process if message is sent TO your account (not FROM your account)
+							if (recipientId === INSTAGRAM_ACCOUNT_ID) {
+								// Get AI response
+								const aiResponse = await getOpenAIResponse(userMessage);
+
+								// Send reply to Instagram (only if access token is configured and valid)
+								if (
+									INSTAGRAM_ACCESS_TOKEN &&
+									INSTAGRAM_ACCESS_TOKEN !==
+										"your_instagram_page_access_token_here" &&
+									INSTAGRAM_ACCESS_TOKEN.length > 50
+								) {
+									try {
+										console.log(`\n📤 Sending reply to Instagram...`);
+										await sendInstagramMessage(senderId, aiResponse);
+										console.log(`✅ Reply sent successfully!\n`);
+									} catch (sendError) {
+										console.log(`\n❌ Failed to send Instagram reply`);
+										console.log(`💡 Your Instagram Access Token may be expired or invalid`);
+										console.log(`   Get a new token from: https://developers.facebook.com/tools/explorer/\n`);
+									}
+								} else {
+									console.log(
+										`\n⚠️  Instagram Access Token not configured - Response displayed above only`
+									);
+									console.log(
+										`💡 To enable auto-replies, get a valid Instagram Page Access Token from Meta Developer Console\n`
+									);
+								}
+							} else {
+								console.log(`⚠️  Skipping - message not sent to our account\n`);
+							}
 						}
 					}
 				}
