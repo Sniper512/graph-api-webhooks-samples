@@ -52,7 +52,7 @@ async function getOpenAIResponse(userMessage) {
 		};
 
 		// Only add temperature if not using o1 models
-		if (!OPENAI_MODEL.startsWith('o1')) {
+		if (!OPENAI_MODEL.startsWith("o1")) {
 			requestBody.temperature = 0.7;
 		}
 
@@ -256,8 +256,12 @@ app.post("/instagram", async function (req, res) {
 										console.log(`✅ Reply sent successfully!\n`);
 									} catch (sendError) {
 										console.log(`\n❌ Failed to send Instagram reply`);
-										console.log(`💡 Your Instagram Access Token may be expired or invalid`);
-										console.log(`   Get a new token from: https://developers.facebook.com/tools/explorer/\n`);
+										console.log(
+											`💡 Your Instagram Access Token may be expired or invalid`
+										);
+										console.log(
+											`   Get a new token from: https://developers.facebook.com/tools/explorer/\n`
+										);
 									}
 								} else {
 									console.log(
