@@ -22,32 +22,50 @@ app.use(bodyParser.json());
 
 var token = process.env.INSTAGRAM_ACCESS_TOKEN || "token";
 var received_updates = [];
+var conversations = {}; // Store conversation history by sender ID
 
 // OpenAI API Configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5";
-const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
+const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCOUNT_ACCESS_TOKEN;
 const INSTAGRAM_ACCOUNT_ID = process.env.INSTAGRAM_ACCOUNT_ID;
 
 // Function to get OpenAI response
-async function getOpenAIResponse(userMessage) {
+async function getOpenAIResponse(userMessage, senderId) {
 	try {
 		console.log(`\n🤖 Sending to OpenAI (${OPENAI_MODEL})...`);
 		console.log(`📝 User message: "${userMessage}"`);
 
+		// Get conversation history for this sender
+		const conversationHistory = conversations[senderId] || [];
+
+		// Build messages array with conversation history
+		const messages = [
+			{
+				role: "system",
+				content:
+					"You are a helpful assistant responding to Instagram messages. Be friendly, concise, and helpful. Maintain context from previous messages in the conversation.",
+			},
+		];
+
+		// Add conversation history (last 10 messages to avoid token limits)
+		const recentHistory = conversationHistory.slice(-10);
+		recentHistory.forEach(msg => {
+			messages.push({
+				role: msg.role,
+				content: msg.content
+			});
+		});
+
+		// Add current user message
+		messages.push({
+			role: "user",
+			content: userMessage,
+		});
+
 		const requestBody = {
 			model: OPENAI_MODEL,
-			messages: [
-				{
-					role: "system",
-					content:
-						"You are a helpful assistant responding to Instagram messages. Be friendly, concise, and helpful.",
-				},
-				{
-					role: "user",
-					content: userMessage,
-				},
-			],
+			messages: messages,
 			max_tokens: 500,
 		};
 
@@ -70,6 +88,13 @@ async function getOpenAIResponse(userMessage) {
 		const aiResponse = response.data.choices[0].message.content;
 		console.log(`\n✅ OpenAI Response:\n${aiResponse}\n`);
 
+		// Store the conversation
+		if (!conversations[senderId]) {
+			conversations[senderId] = [];
+		}
+		conversations[senderId].push({ role: "user", content: userMessage });
+		conversations[senderId].push({ role: "assistant", content: aiResponse });
+
 		return aiResponse;
 	} catch (error) {
 		console.error(
@@ -84,7 +109,7 @@ async function getOpenAIResponse(userMessage) {
 async function sendInstagramMessage(recipientId, messageText) {
 	try {
 		const response = await axios.post(
-			`https://graph.facebook.com/v21.0/${INSTAGRAM_ACCOUNT_ID}/messages`,
+			`https://graph.instagram.com/v24.0/${INSTAGRAM_ACCOUNT_ID}/messages`,
 			{
 				recipient: {
 					id: recipientId,
@@ -240,8 +265,8 @@ app.post("/instagram", async function (req, res) {
 
 							// Only process if message is sent TO your account (not FROM your account)
 							if (recipientId === INSTAGRAM_ACCOUNT_ID) {
-								// Get AI response
-								const aiResponse = await getOpenAIResponse(userMessage);
+								// Get AI response with conversation context
+								const aiResponse = await getOpenAIResponse(userMessage, senderId);
 
 								// Send reply to Instagram (only if access token is configured and valid)
 								if (
