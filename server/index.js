@@ -20,7 +20,7 @@ app.listen(app.get("port"));
 app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
 app.use(bodyParser.json());
 
-var token = process.env.INSTAGRAM_ACCESS_TOKEN || "token";
+var token = process.env.TOKEN || "token";
 var received_updates = [];
 var conversations = {}; // Store conversation history by sender ID
 
@@ -136,6 +136,37 @@ async function sendInstagramMessage(recipientId, messageText) {
 	}
 }
 
+// Function to send WhatsApp message
+async function sendWhatsAppMessage(recipientId, messageText) {
+	try {
+		const response = await axios.post(
+			`https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONENUM_ID}/messages`,
+			{
+				messaging_product: "whatsapp",
+				to: recipientId,
+				type: "text",
+				text: {
+					body: messageText,
+				},
+			},
+			{
+				headers: {
+					Authorization: `Bearer ${process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN}`,
+					"Content-Type": "application/json",
+				},
+			}
+		);
+		console.log("WhatsApp message sent successfully:", response.data);
+		return response.data;
+	} catch (error) {
+		console.error(
+			"WhatsApp Send API Error:",
+			error.response?.data || error.message
+		);
+		throw error;
+	}
+}
+
 app.get("/", function (req, res) {
 	console.log(req);
 	res.send("<pre>" + JSON.stringify(received_updates, null, 2) + "</pre>");
@@ -201,19 +232,49 @@ app.get("/privacy-policy", function (req, res) {
   `);
 });
 
-app.get(
-	["/facebook", "/instagram", "/threads", "/whatsapp"],
-	function (req, res) {
-		if (
-			req.query["hub.mode"] == "subscribe" &&
-			req.query["hub.verify_token"] == token
-		) {
-			res.send(req.query["hub.challenge"]);
-		} else {
-			res.sendStatus(400);
-		}
+app.get("/facebook", function (req, res) {
+	if (
+		req.query["hub.mode"] == "subscribe" &&
+		req.query["hub.verify_token"] == token
+	) {
+		res.send(req.query["hub.challenge"]);
+	} else {
+		res.sendStatus(400);
 	}
-);
+});
+
+app.get("/instagram", function (req, res) {
+	if (
+		req.query["hub.mode"] == "subscribe" &&
+		req.query["hub.verify_token"] == token
+	) {
+		res.send(req.query["hub.challenge"]);
+	} else {
+		res.sendStatus(400);
+	}
+});
+
+app.get("/threads", function (req, res) {
+	if (
+		req.query["hub.mode"] == "subscribe" &&
+		req.query["hub.verify_token"] == token
+	) {
+		res.send(req.query["hub.challenge"]);
+	} else {
+		res.sendStatus(400);
+	}
+});
+
+app.get("/whatsapp", function (req, res) {
+	if (
+		req.query["hub.mode"] == "subscribe" &&
+		req.query["hub.verify_token"] == token
+	) {
+		res.send(req.query["hub.challenge"]);
+	} else {
+		res.sendStatus(400);
+	}
+});
 
 app.post("/facebook", function (req, res) {
 	console.log("Facebook request body:", req.body);
@@ -317,12 +378,82 @@ app.post("/threads", function (req, res) {
 	res.sendStatus(200);
 });
 
-app.post("/whatsapp", function (req, res) {
+app.post("/whatsapp", async function (req, res) {
 	console.log("WhatsApp request body:");
 	console.log(JSON.stringify(req.body, null, 2));
-	// Process the WhatsApp updates here
+
+	// Store the received update
 	received_updates.unshift(req.body);
+
+	// Respond to webhook immediately (required by Meta)
 	res.sendStatus(200);
+
+	// Process the message asynchronously
+	try {
+		if (req.body.object === "whatsapp_business_account") {
+			for (const entry of req.body.entry) {
+				if (entry.changes) {
+					for (const change of entry.changes) {
+						if (change.value && change.value.messages) {
+							for (const message of change.value.messages) {
+								// Check if it's an incoming text message
+								if (message.type === "text") {
+									const senderId = message.from;
+									const recipientId = change.value.metadata.phone_number_id;
+									const userMessage = message.text.body;
+
+									console.log(`\n📨 New WhatsApp Message:`);
+									console.log(`   From: ${senderId}`);
+									console.log(`   To: ${recipientId}`);
+									console.log(`   Message: "${userMessage}"`);
+
+									// Only process if message is sent TO your account
+									console.log(`   Checking recipient: ${recipientId} vs ${process.env.WHATSAPP_PHONENUM_ID}`);
+									if (recipientId === process.env.WHATSAPP_PHONENUM_ID) {
+										// Get AI response with conversation context
+										const aiResponse = await getOpenAIResponse(userMessage, senderId);
+
+										// Send reply to WhatsApp (only if access token is configured and valid)
+										if (
+											process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN &&
+											process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN !==
+												"your_whatsapp_access_token_here" &&
+											process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN.length > 50
+										) {
+											try {
+												console.log(`\n📤 Sending reply to WhatsApp...`);
+												await sendWhatsAppMessage(senderId, aiResponse);
+												console.log(`✅ Reply sent successfully!\n`);
+											} catch (sendError) {
+												console.log(`\n❌ Failed to send WhatsApp reply`);
+												console.log(
+													`💡 Your WhatsApp Access Token may be expired or invalid`
+												);
+												console.log(
+													`   Get a new token from Meta Developer Console\n`
+												);
+											}
+										} else {
+											console.log(
+												`\n⚠️  WhatsApp Access Token not configured - Response displayed above only`
+											);
+											console.log(
+												`💡 To enable auto-replies, get a valid WhatsApp Access Token from Meta Developer Console\n`
+											);
+										}
+									} else {
+										console.log(`⚠️  Skipping - message not sent to our account (recipient mismatch)\n`);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	} catch (error) {
+		console.error("Error processing WhatsApp message:", error);
+	}
 });
 
 app.listen();
