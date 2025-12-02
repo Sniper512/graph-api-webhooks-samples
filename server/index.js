@@ -17,16 +17,14 @@ const axios = require("axios");
 
 // Import routes
 const authRoutes = require("../routes/auth");
+const instagramRoutes = require("../routes/instagram");
 
 const app = express();
 
 app.set("port", process.env.PORT || 5000);
 
 // Connect to MongoDB
-mongoose.connect(process.env.DB_URL, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+mongoose.connect(process.env.DB_URL)
 .then(() => console.log('Connected to MongoDB'))
 .catch(err => console.error('MongoDB connection error:', err));
 
@@ -45,6 +43,9 @@ app.use(cors({
 
 // Mount auth routes
 app.use('/api/auth', authRoutes);
+
+// Mount Instagram routes
+app.use('/api/instagram', instagramRoutes);
 
 var token = process.env.TOKEN || "token";
 var received_updates = [];

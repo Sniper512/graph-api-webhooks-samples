@@ -28,6 +28,11 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     required: true,
     default: false
+  },
+  instagramAccountId: {
+    type: String,
+    required: false,
+    trim: true
   }
 }, {
   timestamps: true

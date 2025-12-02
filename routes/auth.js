@@ -62,7 +62,8 @@ router.post('/signup', async (req, res) => {
         id: user._id,
         fullName: user.fullName,
         businessName: user.businessName,
-        email: user.email
+        email: user.email,
+        instagramAccountId: user.instagramAccountId
       }
     });
 
@@ -117,7 +118,8 @@ router.post('/signin', async (req, res) => {
         id: user._id,
         fullName: user.fullName,
         businessName: user.businessName,
-        email: user.email
+        email: user.email,
+        instagramAccountId: user.instagramAccountId
       }
     });
 
@@ -144,6 +146,7 @@ router.get('/profile', auth, async (req, res) => {
         businessName: user.businessName,
         email: user.email,
         termsAccepted: user.termsAccepted,
+        instagramAccountId: user.instagramAccountId,
         createdAt: user.createdAt
       }
     });
