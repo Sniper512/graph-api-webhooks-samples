@@ -8,17 +8,43 @@
 
 require("dotenv").config();
 
-var bodyParser = require("body-parser");
-var express = require("express");
-var app = express();
-var xhub = require("express-x-hub");
-var axios = require("axios");
+const mongoose = require("mongoose");
+const bodyParser = require("body-parser");
+const express = require("express");
+const cors = require("cors");
+const xhub = require("express-x-hub");
+const axios = require("axios");
+
+// Import routes
+const authRoutes = require("../routes/auth");
+
+const app = express();
 
 app.set("port", process.env.PORT || 5000);
+
+// Connect to MongoDB
+mongoose.connect(process.env.DB_URL, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('Connected to MongoDB'))
+.catch(err => console.error('MongoDB connection error:', err));
+
 app.listen(app.get("port"));
 
 app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
 app.use(bodyParser.json());
+
+// CORS configuration
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:3000'], // Allow frontend dev server and backend
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Mount auth routes
+app.use('/api/auth', authRoutes);
 
 var token = process.env.TOKEN || "token";
 var received_updates = [];
