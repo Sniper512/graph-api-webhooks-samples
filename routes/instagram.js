@@ -24,13 +24,13 @@ router.get('/conversations', auth, async (req, res) => {
       });
     }
 
-    const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCOUNT_ACCESS_TOKEN;
-
-    if (!INSTAGRAM_ACCESS_TOKEN) {
-      return res.status(500).json({
-        message: 'Instagram access token not configured.'
+    if (!user.instagramAccessToken) {
+      return res.status(400).json({
+        message: 'Instagram access token not set. Please set your access token.'
       });
     }
+
+    const INSTAGRAM_ACCESS_TOKEN = user.instagramAccessToken;
 
     // Fetch conversations from Instagram Graph API
     console.log('📨 Instagram Conversations API Request:', {
@@ -133,13 +133,13 @@ router.get('/conversations/:conversationId/messages', auth, async (req, res) => 
       });
     }
 
-    const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCOUNT_ACCESS_TOKEN;
-
-    if (!INSTAGRAM_ACCESS_TOKEN) {
-      return res.status(500).json({
-        message: 'Instagram access token not configured.'
+    if (!user.instagramAccessToken) {
+      return res.status(400).json({
+        message: 'Instagram access token not set. Please set your access token.'
       });
     }
+
+    const INSTAGRAM_ACCESS_TOKEN = user.instagramAccessToken;
 
     // Step 1: Get message IDs from conversation (according to docs)
     const params = {
@@ -253,6 +253,43 @@ router.post('/connect-account', auth, async (req, res) => {
     console.error('Connect Instagram account error:', error);
     res.status(500).json({
       message: 'Failed to connect Instagram account.'
+    });
+  }
+});
+
+// Set user's Instagram access token
+router.post('/set-access-token', auth, async (req, res) => {
+  try {
+    const { accessToken } = req.body;
+
+    if (!accessToken) {
+      return res.status(400).json({
+        message: 'Instagram access token is required.'
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      { instagramAccessToken: accessToken.trim() },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    res.json({
+      message: 'Instagram access token set successfully.',
+      user: {
+        id: user._id,
+        instagramAccountId: user.instagramAccountId
+      }
+    });
+
+  } catch (error) {
+    console.error('Set Instagram access token error:', error);
+    res.status(500).json({
+      message: 'Failed to set Instagram access token.'
     });
   }
 });

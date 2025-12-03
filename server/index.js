@@ -133,10 +133,10 @@ async function getOpenAIResponse(userMessage, senderId) {
 }
 
 // Function to send Instagram message
-async function sendInstagramMessage(recipientId, messageText) {
+async function sendInstagramMessage(recipientId, messageText, accessToken, accountId) {
 	try {
 		const response = await axios.post(
-			`https://graph.instagram.com/v24.0/${INSTAGRAM_ACCOUNT_ID}/messages`,
+			`https://graph.instagram.com/v24.0/${accountId}/messages`,
 			{
 				recipient: {
 					id: recipientId,
@@ -147,7 +147,7 @@ async function sendInstagramMessage(recipientId, messageText) {
 			},
 			{
 				headers: {
-					Authorization: `Bearer ${INSTAGRAM_ACCESS_TOKEN}`,
+					Authorization: `Bearer ${accessToken}`,
 					"Content-Type": "application/json",
 				},
 			}
@@ -351,41 +351,30 @@ app.post("/instagram", async function (req, res) {
 							console.log(`   To: ${recipientId}`);
 							console.log(`   Message: "${userMessage}"`);
 
-							// Only process if message is sent TO your account (not FROM your account)
-							if (recipientId === INSTAGRAM_ACCOUNT_ID) {
+							// Find the user by their Instagram account ID
+							const User = require('../models/User');
+							const user = await User.findOne({ instagramAccountId: recipientId });
+
+							if (user && user.instagramAccessToken) {
 								// Get AI response with conversation context
 								const aiResponse = await getOpenAIResponse(userMessage, senderId);
 
-								// Send reply to Instagram (only if access token is configured and valid)
-								if (
-									INSTAGRAM_ACCESS_TOKEN &&
-									INSTAGRAM_ACCESS_TOKEN !==
-										"your_instagram_page_access_token_here" &&
-									INSTAGRAM_ACCESS_TOKEN.length > 50
-								) {
-									try {
-										console.log(`\n📤 Sending reply to Instagram...`);
-										await sendInstagramMessage(senderId, aiResponse);
-										console.log(`✅ Reply sent successfully!\n`);
-									} catch (sendError) {
-										console.log(`\n❌ Failed to send Instagram reply`);
-										console.log(
-											`💡 Your Instagram Access Token may be expired or invalid`
-										);
-										console.log(
-											`   Get a new token from: https://developers.facebook.com/tools/explorer/\n`
-										);
-									}
-								} else {
+								// Send reply to Instagram using user's token
+								try {
+									console.log(`\n📤 Sending reply to Instagram...`);
+									await sendInstagramMessage(senderId, aiResponse, user.instagramAccessToken, recipientId);
+									console.log(`✅ Reply sent successfully!\n`);
+								} catch (sendError) {
+									console.log(`\n❌ Failed to send Instagram reply`);
 									console.log(
-										`\n⚠️  Instagram Access Token not configured - Response displayed above only`
+										`💡 The user's Instagram Access Token may be expired or invalid`
 									);
 									console.log(
-										`💡 To enable auto-replies, get a valid Instagram Page Access Token from Meta Developer Console\n`
+										`   User needs to update their token via /api/instagram/set-access-token\n`
 									);
 								}
 							} else {
-								console.log(`⚠️  Skipping - message not sent to our account\n`);
+								console.log(`⚠️  Skipping - no user found with Instagram account ID ${recipientId} or no access token set\n`);
 							}
 						}
 					}

@@ -33,6 +33,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: false,
     trim: true
+  },
+  instagramAccessToken: {
+    type: String,
+    required: false,
+    trim: true
   }
 }, {
   timestamps: true
