@@ -75,9 +75,27 @@ async function getOpenAIResponse(userMessage, senderId, userId) {
 		// Get conversation history for this sender
 		const conversationHistory = conversations[senderId] || [];
 
-		// Fetch user-specific FAQs from database
+		// Fetch user-specific business information and FAQs from database
+		let businessInfo = '';
 		let faqContent = '';
+
 		if (userId) {
+			// Fetch business information
+			const Business = require('../models/Business');
+			const business = await Business.findOne({ user: userId });
+
+			if (business) {
+				businessInfo = `${business.businessName}, a ${business.businessCategory} company. ` +
+					`Contact us at ${business.email}` +
+					(business.phoneNumber ? ` or call ${business.phoneNumber}` : '') +
+					(business.website ? `. Visit our website: ${business.website}` : '') +
+					(business.businessDescription ? `. ${business.businessDescription}` : '') +
+					(business.address ? `. We're located at: ${business.address}` : '');
+			} else {
+				businessInfo = 'our business';
+			}
+
+			// Fetch FAQs
 			const FAQ = require('../models/FAQ');
 			const faqs = await FAQ.find({ user: userId }).sort({ createdAt: -1 });
 
@@ -96,9 +114,17 @@ async function getOpenAIResponse(userMessage, senderId, userId) {
 			{
 				role: "system",
 				content:
-					"You are representing Radiance Beauty Clinic, a premier beauty clinic offering comprehensive aesthetic treatments. " +
-					"Your responses should be friendly, professional, and helpful. " +
-					"Use the following FAQs to answer questions when possible: " +
+					`You are representing ${businessInfo}. ` +
+					"You are a helpful assistant that answers questions about the business. " +
+					"Use ONLY the following FAQs to answer questions when possible. " +
+					"IMPORTANT: Keep your responses concise and under 2000 characters total. " +
+					"If providing multiple FAQ answers, limit to 2-3 most relevant ones. " +
+					"Be helpful but brief - Instagram has message length limits. " +
+					"CRITICAL: Never use any external knowledge, training data, or generic information. " +
+					"If you don't have specific information about something in the provided business info or FAQs, " +
+					"respond ONLY with: 'I don't have that specific information right now. " +
+					"One of our team members will connect with you shortly to provide the details you need.' " +
+					"Do NOT provide ANY generic, assumed, or external information about clinics, addresses, or businesses." +
 					faqContent,
 			},
 		];
@@ -121,7 +147,7 @@ async function getOpenAIResponse(userMessage, senderId, userId) {
 		const requestBody = {
 			model: OPENAI_MODEL,
 			messages: messages,
-			max_tokens: 500,
+			max_tokens: 300,
 		};
 
 		// Only add temperature if not using o1 models
