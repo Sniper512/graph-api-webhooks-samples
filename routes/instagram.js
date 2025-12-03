@@ -6,6 +6,27 @@ const { encrypt, decrypt } = require('../utils/encryption');
 
 const router = express.Router();
 
+// Helper function to update Instagram integration status
+async function updateInstagramIntegrationStatus(userId) {
+  const user = await User.findById(userId);
+
+  if (!user) return;
+
+  let newStatus = 'not_connected';
+
+  if (user.instagramCredentials && (user.instagramCredentials.email || user.instagramCredentials.username)) {
+    newStatus = 'pending';
+  }
+
+  if (user.instagramAccountId && user.instagramAccessToken) {
+    newStatus = 'connected';
+  }
+
+  if (user.instagramIntegrationStatus !== newStatus) {
+    await User.findByIdAndUpdate(userId, { instagramIntegrationStatus: newStatus });
+  }
+}
+
 // Get user's recent Instagram conversations
 router.get('/conversations', auth, async (req, res) => {
   console.log('🔥 INSTAGRAM CONVERSATIONS ENDPOINT HIT!');
@@ -242,11 +263,19 @@ router.post('/connect-account', auth, async (req, res) => {
       return res.status(404).json({ message: 'User not found.' });
     }
 
+    // Check if both account ID and access token are set, update status to connected
+    let integrationStatus = user.instagramIntegrationStatus;
+    if (user.instagramAccessToken && user.instagramAccountId) {
+      integrationStatus = 'connected';
+      await User.findByIdAndUpdate(req.user.userId, { instagramIntegrationStatus: 'connected' });
+    }
+
     res.json({
       message: 'Instagram account connected successfully.',
       user: {
         id: user._id,
-        instagramAccountId: user.instagramAccountId
+        instagramAccountId: user.instagramAccountId,
+        instagramIntegrationStatus: integrationStatus
       }
     });
 
@@ -279,11 +308,19 @@ router.post('/set-access-token', auth, async (req, res) => {
       return res.status(404).json({ message: 'User not found.' });
     }
 
+    // Check if both account ID and access token are set, update status to connected
+    let integrationStatus = user.instagramIntegrationStatus;
+    if (user.instagramAccessToken && user.instagramAccountId) {
+      integrationStatus = 'connected';
+      await User.findByIdAndUpdate(req.user.userId, { instagramIntegrationStatus: 'connected' });
+    }
+
     res.json({
       message: 'Instagram access token set successfully.',
       user: {
         id: user._id,
-        instagramAccountId: user.instagramAccountId
+        instagramAccountId: user.instagramAccountId,
+        instagramIntegrationStatus: integrationStatus
       }
     });
 
@@ -315,14 +352,15 @@ router.post('/set-credentials', auth, async (req, res) => {
     // Encrypt the password using master key
     const { encryptedData, iv } = encrypt(password);
 
-    // Update user with encrypted credentials
+    // Update user with encrypted credentials and set status to pending
     const user = await User.findByIdAndUpdate(
       req.user.userId,
       {
         'instagramCredentials.email': email?.trim().toLowerCase(),
         'instagramCredentials.username': username?.trim(),
         'instagramCredentials.encryptedData': encryptedData,
-        'instagramCredentials.iv': iv
+        'instagramCredentials.iv': iv,
+        instagramIntegrationStatus: 'pending'
       },
       { new: true }
     );
@@ -338,7 +376,8 @@ router.post('/set-credentials', auth, async (req, res) => {
         instagramCredentials: {
           email: user.instagramCredentials.email,
           username: user.instagramCredentials.username
-        }
+        },
+        instagramIntegrationStatus: user.instagramIntegrationStatus
       }
     });
 

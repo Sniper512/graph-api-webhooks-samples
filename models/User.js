@@ -39,6 +39,11 @@ const userSchema = new mongoose.Schema({
     required: false,
     trim: true
   },
+  instagramIntegrationStatus: {
+    type: String,
+    enum: ['not_connected', 'pending', 'connected'],
+    default: 'not_connected'
+  },
   instagramCredentials: {
     email: {
       type: String,
