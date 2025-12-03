@@ -38,6 +38,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: false,
     trim: true
+  },
+  business: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Business',
+    required: false
   }
 }, {
   timestamps: true

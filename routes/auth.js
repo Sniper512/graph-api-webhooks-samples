@@ -134,7 +134,7 @@ router.post('/signin', async (req, res) => {
 // Get current user profile (protected route)
 router.get('/profile', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId).select('-password -instagramAccessToken');
+    const user = await User.findById(req.user.userId).select('-password -instagramAccessToken').populate('business');
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
@@ -147,6 +147,18 @@ router.get('/profile', auth, async (req, res) => {
         email: user.email,
         termsAccepted: user.termsAccepted,
         instagramAccountId: user.instagramAccountId,
+        business: user.business ? {
+          id: user.business._id,
+          businessName: user.business.businessName,
+          businessCategory: user.business.businessCategory,
+          email: user.business.email,
+          phoneNumber: user.business.phoneNumber,
+          website: user.business.website,
+          businessDescription: user.business.businessDescription,
+          address: user.business.address,
+          createdAt: user.business.createdAt,
+          updatedAt: user.business.updatedAt
+        } : null,
         createdAt: user.createdAt
       }
     });

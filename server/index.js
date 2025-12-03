@@ -18,6 +18,7 @@ const axios = require("axios");
 // Import routes
 const authRoutes = require("../routes/auth");
 const instagramRoutes = require("../routes/instagram");
+const businessRoutes = require("../routes/business");
 const faqRoutes = require("../routes/faqs");
 
 const app = express();
@@ -47,6 +48,9 @@ app.use('/api/auth', authRoutes);
 
 // Mount Instagram routes
 app.use('/api/instagram', instagramRoutes);
+
+// Mount business routes
+app.use('/api/business', businessRoutes);
 
 // Mount FAQ routes
 app.use('/api/faqs', faqRoutes);
