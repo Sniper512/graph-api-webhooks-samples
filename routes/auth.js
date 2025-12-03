@@ -134,7 +134,7 @@ router.post('/signin', async (req, res) => {
 // Get current user profile (protected route)
 router.get('/profile', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId).select('-password');
+    const user = await User.findById(req.user.userId).select('-password -instagramAccessToken');
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
