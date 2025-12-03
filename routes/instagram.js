@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
+const { encrypt, decrypt } = require('../utils/encryption');
 
 const router = express.Router();
 
@@ -290,6 +291,96 @@ router.post('/set-access-token', auth, async (req, res) => {
     console.error('Set Instagram access token error:', error);
     res.status(500).json({
       message: 'Failed to set Instagram access token.'
+    });
+  }
+});
+
+// Set user's Instagram credentials (email, username, password)
+router.post('/set-credentials', auth, async (req, res) => {
+  try {
+    const { email, username, password } = req.body;
+
+    if (!email && !username) {
+      return res.status(400).json({
+        message: 'Either email or username is required.'
+      });
+    }
+
+    if (!password) {
+      return res.status(400).json({
+        message: 'Password is required.'
+      });
+    }
+
+    // Encrypt the password using master key
+    const { encryptedData, iv } = encrypt(password);
+
+    // Update user with encrypted credentials
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      {
+        'instagramCredentials.email': email?.trim().toLowerCase(),
+        'instagramCredentials.username': username?.trim(),
+        'instagramCredentials.encryptedData': encryptedData,
+        'instagramCredentials.iv': iv
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    res.json({
+      message: 'Instagram credentials set successfully.',
+      user: {
+        id: user._id,
+        instagramCredentials: {
+          email: user.instagramCredentials.email,
+          username: user.instagramCredentials.username
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Set Instagram credentials error:', error);
+    res.status(500).json({
+      message: 'Failed to set Instagram credentials.'
+    });
+  }
+});
+
+// Get user's Instagram credentials (for admin panel)
+router.get('/credentials', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('instagramCredentials');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    if (!user.instagramCredentials?.encryptedData) {
+      return res.status(404).json({ message: 'Instagram credentials not found.' });
+    }
+
+    // Decrypt the password using master key
+    const decryptedPassword = decrypt(
+      user.instagramCredentials.encryptedData,
+      user.instagramCredentials.iv
+    );
+
+    res.json({
+      instagramCredentials: {
+        email: user.instagramCredentials.email,
+        username: user.instagramCredentials.username,
+        password: decryptedPassword
+      }
+    });
+
+  } catch (error) {
+    console.error('Get Instagram credentials error:', error);
+    res.status(500).json({
+      message: 'Failed to retrieve Instagram credentials.'
     });
   }
 });

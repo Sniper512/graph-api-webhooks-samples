@@ -39,6 +39,27 @@ const userSchema = new mongoose.Schema({
     required: false,
     trim: true
   },
+  instagramCredentials: {
+    email: {
+      type: String,
+      required: false,
+      trim: true,
+      lowercase: true
+    },
+    username: {
+      type: String,
+      required: false,
+      trim: true
+    },
+    encryptedData: {
+      type: String,
+      required: false
+    },
+    iv: {
+      type: String,
+      required: false
+    }
+  },
   business: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Business',
