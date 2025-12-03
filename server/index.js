@@ -66,8 +66,7 @@ var conversations = {}; // Store conversation history by sender ID
 // OpenAI API Configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5";
-const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCOUNT_ACCESS_TOKEN;
-const INSTAGRAM_ACCOUNT_ID = process.env.INSTAGRAM_ACCOUNT_ID;
+
 
 // Function to get OpenAI response
 async function getOpenAIResponse(userMessage, senderId, userId) {
