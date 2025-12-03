@@ -124,7 +124,7 @@ async function getOpenAIResponse(userMessage, senderId, userId) {
 					"If you don't have specific information about something in the provided business info or FAQs, " +
 					"respond ONLY with: 'I don't have that specific information right now. " +
 					"One of our team members will connect with you shortly to provide the details you need.' " +
-					"Do NOT provide ANY generic, assumed, or external information about clinics, addresses, or businesses." +
+					"Do NOT provide ANY generic, assumed, or external information about addresses, or businesses." +
 					faqContent,
 			},
 		];
