@@ -20,6 +20,7 @@ const authRoutes = require("../routes/auth");
 const instagramRoutes = require("../routes/instagram");
 const businessRoutes = require("../routes/business");
 const faqRoutes = require("../routes/faqs");
+const adminRoutes = require("../routes/admin");
 
 const app = express();
 
@@ -37,10 +38,10 @@ app.use(bodyParser.json());
 
 // CORS configuration
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000'], // Allow frontend dev server and backend
+  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'], // Allow frontend dev server, backend, and admin dashboard
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Key']
 }));
 
 // Mount auth routes
@@ -54,6 +55,9 @@ app.use('/api/business', businessRoutes);
 
 // Mount FAQ routes
 app.use('/api/faqs', faqRoutes);
+
+// Mount Admin routes
+app.use('/api/admin', adminRoutes);
 
 var token = process.env.TOKEN || "token";
 var received_updates = [];

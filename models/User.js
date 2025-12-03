@@ -39,6 +39,23 @@ const userSchema = new mongoose.Schema({
     required: false,
     trim: true
   },
+  instagramAppConfig: {
+    appName: {
+      type: String,
+      required: false,
+      trim: true
+    },
+    appId: {
+      type: String,
+      required: false,
+      trim: true
+    },
+    appSecret: {
+      type: String,
+      required: false,
+      trim: true
+    }
+  },
   instagramIntegrationStatus: {
     type: String,
     enum: ['not_connected', 'pending', 'connected'],
