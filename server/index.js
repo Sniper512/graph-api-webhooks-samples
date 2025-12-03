@@ -18,6 +18,7 @@ const axios = require("axios");
 // Import routes
 const authRoutes = require("../routes/auth");
 const instagramRoutes = require("../routes/instagram");
+const faqRoutes = require("../routes/faqs");
 
 const app = express();
 
@@ -46,6 +47,9 @@ app.use('/api/auth', authRoutes);
 
 // Mount Instagram routes
 app.use('/api/instagram', instagramRoutes);
+
+// Mount FAQ routes
+app.use('/api/faqs', faqRoutes);
 
 var token = process.env.TOKEN || "token";
 var received_updates = [];
