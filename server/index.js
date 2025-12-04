@@ -34,27 +34,18 @@ mongoose
 
 app.listen(app.get("port"));
 
-app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
-app.use(bodyParser.json());
-
-// CORS configuration
-const allowedOrigins = [
-	"http://localhost:5173",
-	"http://localhost:3000",
-	"http://localhost:3001",
-	"https://meta-user-dashboard.vercel.app",
-	"https://meta-admin-frontend-afeef8ca7e07.herokuapp.com",
-	process.env.FRONTEND_URL, // Allow configuring additional frontend URLs via env
-].filter(Boolean);
-
+// CORS configuration - allow all origins
 app.use(
 	cors({
-		origin: allowedOrigins,
+		origin: true,
 		credentials: true,
 		methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 		allowedHeaders: ["Content-Type", "Authorization", "X-Admin-Key"],
 	})
 );
+
+app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
+app.use(bodyParser.json());
 
 // Mount auth routes
 app.use("/api/auth", authRoutes);
