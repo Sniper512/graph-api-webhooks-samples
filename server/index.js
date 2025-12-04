@@ -34,12 +34,13 @@ mongoose
 	.connect(process.env.DB_URL)
 	.then(() => {
 		console.log("Connected to MongoDB");
-		// Archive old conversations daily
-		setInterval(() => {
-			Conversation.archiveOldConversations()
-				.then(() => console.log("✅ Old conversations archived"))
-				.catch(err => console.error("❌ Error archiving conversations:", err));
-		}, 24 * 60 * 60 * 1000); // Run daily
+		// Note: Auto-archiving disabled for MVP - keeping all conversation history
+		// Uncomment below to enable auto-archiving after 7 days:
+		// setInterval(() => {
+		// 	Conversation.archiveOldConversations()
+		// 		.then(() => console.log("✅ Old conversations archived"))
+		// 		.catch(err => console.error("❌ Error archiving conversations:", err));
+		// }, 24 * 60 * 60 * 1000); // Run daily
 	})
 	.catch((err) => console.error("MongoDB connection error:", err));
 
@@ -422,6 +423,7 @@ app.post("/instagram", async function (req, res) {
 							!messagingEvent.message.is_echo
 						) {
 							const senderId = messagingEvent.sender.id;
+							console.log("=== Sender ===:", messagingEvent.sender);
 							const recipientId = messagingEvent.recipient.id;
 							const userMessage = messagingEvent.message.text;
 
