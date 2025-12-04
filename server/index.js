@@ -27,9 +27,10 @@ const app = express();
 app.set("port", process.env.PORT || 5000);
 
 // Connect to MongoDB
-mongoose.connect(process.env.DB_URL)
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
+mongoose
+	.connect(process.env.DB_URL)
+	.then(() => console.log("Connected to MongoDB"))
+	.catch((err) => console.error("MongoDB connection error:", err));
 
 app.listen(app.get("port"));
 
@@ -37,27 +38,37 @@ app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
 app.use(bodyParser.json());
 
 // CORS configuration
-app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'], // Allow frontend dev server, backend, and admin dashboard
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Key']
-}));
+const allowedOrigins = [
+	"http://localhost:5173",
+	"http://localhost:3000",
+	"http://localhost:3001",
+	"https://meta-user-dashboard.vercel.app",
+	process.env.FRONTEND_URL, // Allow configuring additional frontend URLs via env
+].filter(Boolean);
+
+app.use(
+	cors({
+		origin: allowedOrigins,
+		credentials: true,
+		methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+		allowedHeaders: ["Content-Type", "Authorization", "X-Admin-Key"],
+	})
+);
 
 // Mount auth routes
-app.use('/api/auth', authRoutes);
+app.use("/api/auth", authRoutes);
 
 // Mount Instagram routes
-app.use('/api/instagram', instagramRoutes);
+app.use("/api/instagram", instagramRoutes);
 
 // Mount business routes
-app.use('/api/business', businessRoutes);
+app.use("/api/business", businessRoutes);
 
 // Mount FAQ routes
-app.use('/api/faqs', faqRoutes);
+app.use("/api/faqs", faqRoutes);
 
 // Mount Admin routes
-app.use('/api/admin', adminRoutes);
+app.use("/api/admin", adminRoutes);
 
 var token = process.env.TOKEN || "token";
 var received_updates = [];
@@ -66,7 +77,6 @@ var conversations = {}; // Store conversation history by sender ID
 // OpenAI API Configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5";
-
 
 // Function to get OpenAI response
 async function getOpenAIResponse(userMessage, senderId, userId) {
@@ -79,36 +89,39 @@ async function getOpenAIResponse(userMessage, senderId, userId) {
 		const conversationHistory = conversations[senderId] || [];
 
 		// Fetch user-specific business information and FAQs from database
-		let businessInfo = '';
-		let faqContent = '';
+		let businessInfo = "";
+		let faqContent = "";
 
 		if (userId) {
 			// Fetch business information
-			const Business = require('../models/Business');
+			const Business = require("../models/Business");
 			const business = await Business.findOne({ user: userId });
 
 			if (business) {
-				businessInfo = `${business.businessName}, a ${business.businessCategory} company. ` +
+				businessInfo =
+					`${business.businessName}, a ${business.businessCategory} company. ` +
 					`Contact us at ${business.email}` +
-					(business.phoneNumber ? ` or call ${business.phoneNumber}` : '') +
-					(business.website ? `. Visit our website: ${business.website}` : '') +
-					(business.businessDescription ? `. ${business.businessDescription}` : '') +
-					(business.address ? `. We're located at: ${business.address}` : '');
+					(business.phoneNumber ? ` or call ${business.phoneNumber}` : "") +
+					(business.website ? `. Visit our website: ${business.website}` : "") +
+					(business.businessDescription
+						? `. ${business.businessDescription}`
+						: "") +
+					(business.address ? `. We're located at: ${business.address}` : "");
 			} else {
-				businessInfo = 'our business';
+				businessInfo = "our business";
 			}
 
 			// Fetch FAQs
-			const FAQ = require('../models/FAQ');
+			const FAQ = require("../models/FAQ");
 			const faqs = await FAQ.find({ user: userId }).sort({ createdAt: -1 });
 
 			if (faqs.length > 0) {
-				faqContent = '\n\n## BUSINESS FAQS\n\n';
+				faqContent = "\n\n## BUSINESS FAQS\n\n";
 				faqs.forEach((faq, index) => {
 					faqContent += `**${faq.question}**\n${faq.answer}\n\n`;
 				});
 			} else {
-				faqContent = '\n\n## BUSINESS FAQS\n\nNo FAQs have been added yet.\n\n';
+				faqContent = "\n\n## BUSINESS FAQS\n\nNo FAQs have been added yet.\n\n";
 			}
 		}
 
@@ -134,10 +147,10 @@ async function getOpenAIResponse(userMessage, senderId, userId) {
 
 		// Add conversation history (last 10 messages to avoid token limits)
 		const recentHistory = conversationHistory.slice(-10);
-		recentHistory.forEach(msg => {
+		recentHistory.forEach((msg) => {
 			messages.push({
 				role: msg.role,
-				content: msg.content
+				content: msg.content,
 			});
 		});
 
@@ -190,7 +203,12 @@ async function getOpenAIResponse(userMessage, senderId, userId) {
 }
 
 // Function to send Instagram message
-async function sendInstagramMessage(recipientId, messageText, accessToken, accountId) {
+async function sendInstagramMessage(
+	recipientId,
+	messageText,
+	accessToken,
+	accountId
+) {
 	try {
 		const response = await axios.post(
 			`https://graph.instagram.com/v24.0/${accountId}/messages`,
@@ -409,17 +427,28 @@ app.post("/instagram", async function (req, res) {
 							console.log(`   Message: "${userMessage}"`);
 
 							// Find the user by their Instagram account ID
-							const User = require('../models/User');
-							const user = await User.findOne({ instagramAccountId: recipientId });
+							const User = require("../models/User");
+							const user = await User.findOne({
+								instagramAccountId: recipientId,
+							});
 
 							if (user && user.instagramAccessToken) {
 								// Get AI response with conversation context
-								const aiResponse = await getOpenAIResponse(userMessage, senderId, user._id);
+								const aiResponse = await getOpenAIResponse(
+									userMessage,
+									senderId,
+									user._id
+								);
 
 								// Send reply to Instagram using user's token
 								try {
 									console.log(`\n📤 Sending reply to Instagram...`);
-									await sendInstagramMessage(senderId, aiResponse, user.instagramAccessToken, recipientId);
+									await sendInstagramMessage(
+										senderId,
+										aiResponse,
+										user.instagramAccessToken,
+										recipientId
+									);
 									console.log(`✅ Reply sent successfully!\n`);
 								} catch (sendError) {
 									console.log(`\n❌ Failed to send Instagram reply`);
@@ -431,7 +460,9 @@ app.post("/instagram", async function (req, res) {
 									);
 								}
 							} else {
-								console.log(`⚠️  Skipping - no user found with Instagram account ID ${recipientId} or no access token set\n`);
+								console.log(
+									`⚠️  Skipping - no user found with Instagram account ID ${recipientId} or no access token set\n`
+								);
 							}
 						}
 					}
@@ -481,10 +512,16 @@ app.post("/whatsapp", async function (req, res) {
 									console.log(`   Message: "${userMessage}"`);
 
 									// Only process if message is sent TO your account
-									console.log(`   Checking recipient: ${recipientId} vs ${process.env.WHATSAPP_PHONENUM_ID}`);
+									console.log(
+										`   Checking recipient: ${recipientId} vs ${process.env.WHATSAPP_PHONENUM_ID}`
+									);
 									if (recipientId === process.env.WHATSAPP_PHONENUM_ID) {
 										// Get AI response with conversation context
-										const aiResponse = await getOpenAIResponse(userMessage, senderId, null);
+										const aiResponse = await getOpenAIResponse(
+											userMessage,
+											senderId,
+											null
+										);
 
 										// Send reply to WhatsApp (only if access token is configured and valid)
 										if (
@@ -515,7 +552,9 @@ app.post("/whatsapp", async function (req, res) {
 											);
 										}
 									} else {
-										console.log(`⚠️  Skipping - message not sent to our account (recipient mismatch)\n`);
+										console.log(
+											`⚠️  Skipping - message not sent to our account (recipient mismatch)\n`
+										);
 									}
 								}
 							}
