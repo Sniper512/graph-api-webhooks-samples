@@ -150,11 +150,14 @@ router.post('/users/:userId/instagram-config', adminAuth, async (req, res) => {
     if (instagramAccessToken) {
       updateData.instagramAccessToken = instagramAccessToken.trim();
     }
-    if (appName || appId || appSecret) {
-      updateData.instagramAppConfig = {};
-      if (appName) updateData['instagramAppConfig.appName'] = appName.trim();
-      if (appId) updateData['instagramAppConfig.appId'] = appId.trim();
-      if (appSecret) updateData['instagramAppConfig.appSecret'] = appSecret.trim();
+    if (appName) {
+      updateData['instagramAppConfig.appName'] = appName.trim();
+    }
+    if (appId) {
+      updateData['instagramAppConfig.appId'] = appId.trim();
+    }
+    if (appSecret) {
+      updateData['instagramAppConfig.appSecret'] = appSecret.trim();
     }
 
     const user = await User.findByIdAndUpdate(userId, updateData, { new: true });
