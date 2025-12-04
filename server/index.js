@@ -22,6 +22,9 @@ const businessRoutes = require("../routes/business");
 const faqRoutes = require("../routes/faqs");
 const adminRoutes = require("../routes/admin");
 
+// Import models
+const Conversation = require("../models/Conversation");
+
 const app = express();
 
 app.set("port", process.env.PORT || 5000);
@@ -29,7 +32,15 @@ app.set("port", process.env.PORT || 5000);
 // Connect to MongoDB
 mongoose
 	.connect(process.env.DB_URL)
-	.then(() => console.log("Connected to MongoDB"))
+	.then(() => {
+		console.log("Connected to MongoDB");
+		// Archive old conversations daily
+		setInterval(() => {
+			Conversation.archiveOldConversations()
+				.then(() => console.log("✅ Old conversations archived"))
+				.catch(err => console.error("❌ Error archiving conversations:", err));
+		}, 24 * 60 * 60 * 1000); // Run daily
+	})
 	.catch((err) => console.error("MongoDB connection error:", err));
 
 app.listen(app.get("port"));
@@ -64,21 +75,21 @@ app.use("/api/admin", adminRoutes);
 
 var token = process.env.TOKEN || "token";
 var received_updates = [];
-var conversations = {}; // Store conversation history by sender ID
 
 // OpenAI API Configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5";
 
 // Function to get OpenAI response
-async function getOpenAIResponse(userMessage, senderId, userId) {
+async function getOpenAIResponse(userMessage, senderId, userId, platform = 'instagram') {
 	try {
 		console.log(`\n🤖 Sending to OpenAI (${OPENAI_MODEL})...`);
 		console.log(`📝 User message: "${userMessage}"`);
 		console.log(`👤 User ID: ${userId}`);
 
-		// Get conversation history for this sender
-		const conversationHistory = conversations[senderId] || [];
+		// Get or create conversation from database
+		const conversation = await Conversation.findOrCreate(senderId, platform, userId);
+		const conversationHistory = conversation.getRecentMessages(10);
 
 		// Fetch user-specific business information and FAQs from database
 		let businessInfo = "";
@@ -132,18 +143,22 @@ async function getOpenAIResponse(userMessage, senderId, userId) {
 					"If you don't have specific information about something in the provided business info or FAQs, " +
 					"respond ONLY with: 'I don't have that specific information right now. " +
 					"One of our team members will connect with you shortly to provide the details you need.' " +
-					"Do NOT provide ANY generic, assumed, or external information about addresses, or businesses." +
+					"Do NOT provide ANY generic, assumed, or external information about addresses, or businesses. " +
+					"CONTEXT AWARENESS: You have access to the full conversation history. " +
+					"Use previous messages to maintain context and provide relevant responses. " +
+					"Reference earlier parts of the conversation when appropriate." +
 					faqContent,
 			},
 		];
 
-		// Add conversation history (last 10 messages to avoid token limits)
-		const recentHistory = conversationHistory.slice(-10);
-		recentHistory.forEach((msg) => {
-			messages.push({
-				role: msg.role,
-				content: msg.content,
-			});
+		// Add conversation history from database
+		conversationHistory.forEach((msg) => {
+			if (msg.role !== 'system') {
+				messages.push({
+					role: msg.role,
+					content: msg.content,
+				});
+			}
 		});
 
 		// Add current user message
@@ -177,12 +192,9 @@ async function getOpenAIResponse(userMessage, senderId, userId) {
 		const aiResponse = response.data.choices[0].message.content;
 		console.log(`\n✅ OpenAI Response:\n${aiResponse}\n`);
 
-		// Store the conversation
-		if (!conversations[senderId]) {
-			conversations[senderId] = [];
-		}
-		conversations[senderId].push({ role: "user", content: userMessage });
-		conversations[senderId].push({ role: "assistant", content: aiResponse });
+		// Save both messages to database
+		await conversation.addMessage('user', userMessage);
+		await conversation.addMessage('assistant', aiResponse);
 
 		return aiResponse;
 	} catch (error) {
@@ -424,15 +436,16 @@ app.post("/instagram", async function (req, res) {
 								instagramAccountId: recipientId,
 							});
 
-							if (user && user.instagramAccessToken) {
-								// Get AI response with conversation context
-								const aiResponse = await getOpenAIResponse(
-									userMessage,
-									senderId,
-									user._id
-								);
+						if (user && user.instagramAccessToken) {
+							// Get AI response with conversation context (pass 'instagram' as platform)
+							const aiResponse = await getOpenAIResponse(
+								userMessage,
+								senderId,
+								user._id,
+								'instagram'
+							);
 
-								// Send reply to Instagram using user's token
+							// Send reply to Instagram using user's token
 								try {
 									console.log(`\n📤 Sending reply to Instagram...`);
 									await sendInstagramMessage(
