@@ -43,6 +43,7 @@ const allowedOrigins = [
 	"http://localhost:3000",
 	"http://localhost:3001",
 	"https://meta-user-dashboard.vercel.app",
+	"https://meta-admin-frontend-afeef8ca7e07.herokuapp.com",
 	process.env.FRONTEND_URL, // Allow configuring additional frontend URLs via env
 ].filter(Boolean);
 
