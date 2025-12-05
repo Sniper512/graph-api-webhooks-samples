@@ -2,7 +2,6 @@ const express = require('express');
 const User = require('../models/User');
 const Business = require('../models/Business');
 const FAQ = require('../models/FAQ');
-const { decrypt } = require('../utils/encryption');
 
 const router = express.Router();
 
@@ -38,8 +37,7 @@ router.get('/users', adminAuth, async (req, res) => {
       status: 'Active', // Default status - can be extended
       instagramIntegrationStatus: user.instagramIntegrationStatus,
       instagramAccountId: user.instagramAccountId || null,
-      hasInstagramCredentials: !!(user.instagramCredentials?.email || user.instagramCredentials?.username),
-      instagramUsername: user.instagramCredentials?.username || null,
+      instagramUsername: user.instagramUsername || null,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt
     }));
@@ -68,28 +66,8 @@ router.get('/users/:userId', adminAuth, async (req, res) => {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    // Decrypt Instagram password if credentials exist
-    let instagramCredentials = null;
-    if (user.instagramCredentials?.encryptedData && user.instagramCredentials?.iv) {
-      try {
-        const decryptedPassword = decrypt(
-          user.instagramCredentials.encryptedData,
-          user.instagramCredentials.iv
-        );
-        instagramCredentials = {
-          email: user.instagramCredentials.email,
-          username: user.instagramCredentials.username,
-          password: decryptedPassword
-        };
-      } catch (decryptError) {
-        console.error('Failed to decrypt Instagram credentials:', decryptError);
-        instagramCredentials = {
-          email: user.instagramCredentials.email,
-          username: user.instagramCredentials.username,
-          password: '[Decryption Failed]'
-        };
-      }
-    }
+    // Get Instagram username
+    const instagramUsername = user.instagramUsername || null;
 
     // Get user's FAQs
     const faqs = await FAQ.find({ user: userId }).sort({ createdAt: -1 });
@@ -106,7 +84,7 @@ router.get('/users/:userId', adminAuth, async (req, res) => {
         termsAccepted: user.termsAccepted,
         instagramAccountId: user.instagramAccountId,
         instagramIntegrationStatus: user.instagramIntegrationStatus,
-        instagramCredentials,
+        instagramUsername,
         instagramAppConfig: user.instagramAppConfig || null,
         hasAccessToken: !!user.instagramAccessToken,
         business: user.business ? {

@@ -3,7 +3,6 @@ const axios = require('axios');
 const User = require('../models/User');
 const Conversation = require('../models/Conversation');
 const auth = require('../middleware/auth');
-const { encrypt, decrypt } = require('../utils/encryption');
 
 const router = express.Router();
 
@@ -211,35 +210,23 @@ router.post('/set-access-token', auth, async (req, res) => {
   }
 });
 
-// Set user's Instagram credentials (email, username, password)
-router.post('/set-credentials', auth, async (req, res) => {
+// Initiate Instagram connection (user provides username, status becomes pending)
+router.post('/initiate-connection', auth, async (req, res) => {
   try {
-    const { email, username, password } = req.body;
+    const { username } = req.body;
 
-    if (!email && !username) {
+    if (!username) {
       return res.status(400).json({
-        message: 'Either email or username is required.'
+        message: 'Instagram username is required.'
       });
     }
 
-    if (!password) {
-      return res.status(400).json({
-        message: 'Password is required.'
-      });
-    }
-
-    // Encrypt the password using master key
-    const { encryptedData, iv } = encrypt(password);
-
-    // Update user with encrypted credentials and set status to pending
+    // Update user with username and set status to pending
     const user = await User.findByIdAndUpdate(
       req.user.userId,
       {
-        'instagramCredentials.email': email?.trim().toLowerCase(),
-        'instagramCredentials.username': username?.trim(),
-        'instagramCredentials.encryptedData': encryptedData,
-        'instagramCredentials.iv': iv,
-        instagramIntegrationStatus: 'pending'
+        'instagramUsername': username.trim(),
+        'instagramIntegrationStatus': 'pending'
       },
       { new: true }
     );
@@ -249,58 +236,21 @@ router.post('/set-credentials', auth, async (req, res) => {
     }
 
     res.json({
-      message: 'Instagram credentials set successfully.',
+      message: 'Instagram connection initiated successfully. Admin will contact you for onboarding.',
       user: {
         id: user._id,
-        instagramCredentials: {
-          email: user.instagramCredentials.email,
-          username: user.instagramCredentials.username
-        },
+        instagramUsername: user.instagramUsername,
         instagramIntegrationStatus: user.instagramIntegrationStatus
       }
     });
 
   } catch (error) {
-    console.error('Set Instagram credentials error:', error);
+    console.error('Initiate Instagram connection error:', error);
     res.status(500).json({
-      message: 'Failed to set Instagram credentials.'
+      message: 'Failed to initiate Instagram connection.'
     });
   }
 });
 
-// Get user's Instagram credentials (for admin panel)
-router.get('/credentials', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.userId).select('instagramCredentials');
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found.' });
-    }
-
-    if (!user.instagramCredentials?.encryptedData) {
-      return res.status(404).json({ message: 'Instagram credentials not found.' });
-    }
-
-    // Decrypt the password using master key
-    const decryptedPassword = decrypt(
-      user.instagramCredentials.encryptedData,
-      user.instagramCredentials.iv
-    );
-
-    res.json({
-      instagramCredentials: {
-        email: user.instagramCredentials.email,
-        username: user.instagramCredentials.username,
-        password: decryptedPassword
-      }
-    });
-
-  } catch (error) {
-    console.error('Get Instagram credentials error:', error);
-    res.status(500).json({
-      message: 'Failed to retrieve Instagram credentials.'
-    });
-  }
-});
 
 module.exports = router;

@@ -39,6 +39,11 @@ const userSchema = new mongoose.Schema({
     required: false,
     trim: true
   },
+  instagramUsername: {
+    type: String,
+    required: false,
+    trim: true
+  },
   instagramAppConfig: {
     appName: {
       type: String,
@@ -60,27 +65,6 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ['not_connected', 'pending', 'connected'],
     default: 'not_connected'
-  },
-  instagramCredentials: {
-    email: {
-      type: String,
-      required: false,
-      trim: true,
-      lowercase: true
-    },
-    username: {
-      type: String,
-      required: false,
-      trim: true
-    },
-    encryptedData: {
-      type: String,
-      required: false
-    },
-    iv: {
-      type: String,
-      required: false
-    }
   },
   business: {
     type: mongoose.Schema.Types.ObjectId,
