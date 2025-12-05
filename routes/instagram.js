@@ -6,6 +6,28 @@ const auth = require('../middleware/auth');
 
 const router = express.Router();
 
+// Function to fetch Instagram user profile
+async function getInstagramUserProfile(userId, accessToken) {
+	try {
+		const response = await axios.get(
+			`https://graph.instagram.com/${userId}?fields=username&access_token=${accessToken}`
+		);
+		return {
+			username: response.data.username,
+			profilePicture: null // Profile pictures not available for IG Business scoped IDs
+		};
+	} catch (error) {
+		console.error(
+			"Instagram User Profile API Error:",
+			error.response?.data || error.message
+		);
+		return {
+			username: null,
+			profilePicture: null
+		};
+	}
+}
+
 // Get user's recent Instagram conversations from database
 router.get('/conversations', auth, async (req, res) => {
   console.log('🔥 INSTAGRAM CONVERSATIONS ENDPOINT HIT!');
@@ -29,24 +51,18 @@ router.get('/conversations', auth, async (req, res) => {
     .select('senderId messages lastMessageAt createdAt')
     .lean();
 
-    // Format conversations with last message preview
-    const formattedConversations = conversations.map(conv => {
-      const lastMessage = conv.messages[conv.messages.length - 1];
-      const messageCount = conv.messages.length;
-      
+    // Format conversations with user profile info
+    const formattedConversations = await Promise.all(conversations.map(async (conv) => {
+      // Fetch user profile from Instagram API
+      const userProfile = await getInstagramUserProfile(conv.senderId, user.instagramAccessToken);
+
       return {
         id: conv._id,
-        senderId: conv.senderId,
-        lastMessage: lastMessage ? {
-          content: lastMessage.content,
-          role: lastMessage.role,
-          timestamp: lastMessage.timestamp
-        } : null,
-        messageCount,
-        lastMessageAt: conv.lastMessageAt,
-        createdAt: conv.createdAt
+        userId: conv.senderId,
+        username: userProfile.username,
+        profilePicture: userProfile.profilePicture
       };
-    });
+    }));
 
     const apiResponse = {
       conversations: formattedConversations,

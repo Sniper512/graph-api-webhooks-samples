@@ -241,6 +241,27 @@ async function sendInstagramMessage(
 		);
 		throw error;
 	}
+// Function to fetch Instagram user profile
+async function getInstagramUserProfile(userId, accessToken) {
+	try {
+		const response = await axios.get(
+			`https://graph.instagram.com/${userId}?fields=username&access_token=${accessToken}`
+		);
+		return {
+			username: response.data.username,
+			profilePicture: null // Profile pictures not available for IG Business scoped IDs
+		};
+	} catch (error) {
+		console.error(
+			"Instagram User Profile API Error:",
+			error.response?.data || error.message
+		);
+		return {
+			username: null,
+			profilePicture: null
+		};
+	}
+}
 }
 
 // Function to send WhatsApp message
