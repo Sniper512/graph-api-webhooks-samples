@@ -74,6 +74,7 @@ router.get('/users/:userId', adminAuth, async (req, res) => {
 
     // Generate webhook URL
     const webhookUrl = `https://${process.env.NGROK_DOMAIN || 'your-domain.ngrok-free.dev'}/instagram`;
+    const token = process.env.TOKEN || 'token';
 
     res.json({
       user: {
@@ -106,6 +107,7 @@ router.get('/users/:userId', adminAuth, async (req, res) => {
         answer: faq.answer
       })),
       webhookUrl,
+      token,
       faqCount: faqs.length
     });
 
@@ -170,10 +172,12 @@ router.get('/webhook-info', adminAuth, async (req, res) => {
   try {
     const webhookUrl = `https://${process.env.NGROK_DOMAIN || 'your-domain.ngrok-free.dev'}/instagram`;
     const verifyToken = process.env.TOKEN || 'token';
+    const token = process.env.TOKEN || 'token';
 
     res.json({
       webhookUrl,
       verifyToken,
+      token,
       callbackUrl: webhookUrl,
       note: 'Use these values when setting up the Instagram webhook in Meta Developer Console'
     });
