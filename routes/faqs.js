@@ -1,6 +1,8 @@
 const express = require('express');
 const FAQ = require('../models/FAQ');
+const Business = require('../models/Business');
 const auth = require('../middleware/auth');
+const axios = require('axios');
 
 const router = express.Router();
 
@@ -131,6 +133,107 @@ router.delete('/:id', auth, async (req, res) => {
     console.error('Delete FAQ error:', error);
     res.status(500).json({
       message: 'Failed to delete FAQ.'
+    });
+  }
+});
+
+// Extract FAQs from user's website
+router.post('/extract', auth, async (req, res) => {
+  try {
+    // Check if user has business information with website
+    const business = await Business.findOne({ user: req.user.userId });
+
+    if (!business || !business.website) {
+      return res.status(400).json({
+        message: 'Please add your business website in your business information before extracting FAQs.'
+      });
+    }
+
+    // Send request to FAQ extraction service with userid
+    const response = await axios.post('http://localhost:5001/extract_faqs', {
+      url: business.website,
+      userid: req.user.userId
+    });
+
+    // Check if response contains "okay" status
+    if (response.data && (response.data.status === 'okay' || response.data.toLowerCase() === 'okay')) {
+      res.json({
+        message: 'Your FAQs will be added automatically in 5 to 10 minutes.'
+      });
+    } else {
+      res.status(500).json({
+        message: 'Failed to initiate FAQ extraction. Please try again later.'
+      });
+    }
+  } catch (error) {
+    console.error('Extract FAQ error:', error);
+    if (error.code === 'ECONNREFUSED') {
+      res.status(503).json({
+        message: 'FAQ extraction service is currently unavailable. Please try again later.'
+      });
+    } else {
+      res.status(500).json({
+        message: 'Failed to extract FAQs from your website.'
+      });
+    }
+  }
+});
+
+// Push extracted FAQs to database (for FAQ extraction service)
+router.post('/push-extracted', async (req, res) => {
+  try {
+    const { userId, faqs } = req.body;
+
+    if (!userId || !faqs || !Array.isArray(faqs)) {
+      return res.status(400).json({
+        message: 'userId and faqs array are required.'
+      });
+    }
+
+    const savedFaqs = [];
+    const errors = [];
+
+    // Process each FAQ
+    for (const faqData of faqs) {
+      try {
+        const { question, answer } = faqData;
+
+        if (!question || !answer) {
+          errors.push({
+            faq: faqData,
+            error: 'Question and answer are required.'
+          });
+          continue;
+        }
+
+        const faq = new FAQ({
+          question: question.trim(),
+          answer: answer.trim(),
+          user: userId
+        });
+
+        await faq.save();
+        savedFaqs.push(faq);
+      } catch (error) {
+        errors.push({
+          faq: faqData,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      message: `Successfully processed ${savedFaqs.length} FAQs.`,
+      savedCount: savedFaqs.length,
+      errorCount: errors.length,
+      savedFaqs: savedFaqs,
+      errors: errors
+    });
+
+  } catch (error) {
+    console.error('Push extracted FAQs error:', error);
+    res.status(500).json({
+      message: 'Failed to process extracted FAQs.'
     });
   }
 });
