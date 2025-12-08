@@ -152,7 +152,9 @@ router.post('/extract', auth, async (req, res) => {
     // Send request to FAQ extraction service with userid
     const response = await axios.post('http://localhost:5001/extract_faqs', {
       url: business.website,
-      userid: req.user.userId
+      userid: req.user.userId,
+      max_pages:10,
+      max_depth:3
     });
 
     // Check if response contains "okay" status
@@ -179,16 +181,36 @@ router.post('/extract', auth, async (req, res) => {
   }
 });
 
+// Debug endpoint to test 5001 service connection
+router.post('/test-push', (req, res) => {
+  console.log('🧪 TEST ENDPOINT HIT!');
+  console.log('Request body:', req.body);
+  console.log('Headers:', req.headers);
+  res.json({
+    message: 'Test endpoint working!',
+    receivedData: req.body,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Push extracted FAQs to database (for FAQ extraction service)
 router.post('/push-extracted', async (req, res) => {
+  console.log('📤 PUSH EXTRACTED ENDPOINT HIT!');
+  console.log('Request body keys:', Object.keys(req.body));
+  console.log('Request headers:', req.headers);
+  
   try {
     const { userId, faqs } = req.body;
 
     if (!userId || !faqs || !Array.isArray(faqs)) {
+      console.log('❌ Missing required fields:', { userId: !!userId, faqs: !!faqs, isArray: Array.isArray(faqs) });
       return res.status(400).json({
-        message: 'userId and faqs array are required.'
+        message: 'userId and faqs array are required.',
+        received: { userId, faqs, faqsType: typeof faqs }
       });
     }
+
+    console.log(`✅ Processing ${faqs.length} FAQs for user ${userId}`);
 
     const savedFaqs = [];
     const errors = [];
@@ -215,6 +237,7 @@ router.post('/push-extracted', async (req, res) => {
         await faq.save();
         savedFaqs.push(faq);
       } catch (error) {
+        console.error('Error saving individual FAQ:', error);
         errors.push({
           faq: faqData,
           error: error.message
@@ -222,6 +245,8 @@ router.post('/push-extracted', async (req, res) => {
       }
     }
 
+    console.log(`✅ Successfully saved ${savedFaqs.length} FAQs, ${errors.length} errors`);
+    
     res.json({
       message: `Successfully processed ${savedFaqs.length} FAQs.`,
       savedCount: savedFaqs.length,
@@ -233,7 +258,8 @@ router.post('/push-extracted', async (req, res) => {
   } catch (error) {
     console.error('Push extracted FAQs error:', error);
     res.status(500).json({
-      message: 'Failed to process extracted FAQs.'
+      message: 'Failed to process extracted FAQs.',
+      error: error.message
     });
   }
 });
