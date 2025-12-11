@@ -21,6 +21,7 @@ const instagramRoutes = require("../routes/instagram");
 const businessRoutes = require("../routes/business");
 const faqRoutes = require("../routes/faqs");
 const adminRoutes = require("../routes/admin");
+const timeSlotRoutes = require("../routes/timeslots");
 
 // Import models
 const Conversation = require("../models/Conversation");
@@ -57,6 +58,47 @@ app.use(
 );
 
 app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
+
+// Request logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  console.log('\n🚀 INCOMING REQUEST');
+  console.log('📍 Method:', req.method);
+  console.log('🌐 URL:', req.url);
+  console.log('📋 Path:', req.path);
+  console.log('🔍 Query:', JSON.stringify(req.query, null, 2));
+  console.log('📦 Body:', JSON.stringify(req.body, null, 2));
+  console.log('🔐 Auth Header:', req.header('Authorization') ? '[PRESENT]' : '[MISSING]');
+  console.log('⏰ Timestamp:', new Date().toISOString());
+  
+  // Capture original json method
+  const originalJson = res.json;
+  
+  // Override json method to log response
+  res.json = function(data) {
+    const duration = Date.now() - start;
+    console.log('\n📤 OUTGOING RESPONSE');
+    console.log('📊 Status:', res.statusCode);
+    console.log('📦 Response Data:', JSON.stringify(data, null, 2));
+    console.log('⏱️ Duration:', duration + 'ms');
+    console.log('✅ Response sent\n');
+    
+    return originalJson.call(this, data);
+  };
+  
+  // Log response when it finishes
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log('\n🏁 REQUEST COMPLETED');
+    console.log('📊 Final Status:', res.statusCode);
+    console.log('⏱️ Total Duration:', duration + 'ms');
+    console.log('========================\n');
+  });
+  
+  next();
+});
+
 app.use(bodyParser.json());
 
 // Mount auth routes
@@ -73,6 +115,9 @@ app.use("/api/faqs", faqRoutes);
 
 // Mount Admin routes
 app.use("/api/admin", adminRoutes);
+
+// Mount time slot routes
+app.use("/api/timeslots", timeSlotRoutes);
 
 var token = process.env.TOKEN || "token";
 var received_updates = [];
