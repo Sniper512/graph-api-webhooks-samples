@@ -22,6 +22,7 @@ const businessRoutes = require("../routes/business");
 const faqRoutes = require("../routes/faqs");
 const adminRoutes = require("../routes/admin");
 const timeSlotRoutes = require("../routes/timeslots");
+const googleCalendarRoutes = require("../routes/googleCalendar");
 
 // Import models
 const Conversation = require("../models/Conversation");
@@ -50,7 +51,7 @@ app.listen(app.get("port"));
 // CORS configuration - allow all origins
 app.use(
 	cors({
-		origin: true,
+		origin: 'http://localhost:5173',
 		credentials: true,
 		methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 		allowedHeaders: ["Content-Type", "Authorization", "X-Admin-Key"],
@@ -101,6 +102,15 @@ app.use((req, res, next) => {
 
 app.use(bodyParser.json());
 
+// Session middleware for storing temporary data
+const session = require('express-session');
+app.use(session({
+  secret: process.env.APP_SECRET || 'your_session_secret',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // Set to true if using HTTPS
+}));
+
 // Mount auth routes
 app.use("/api/auth", authRoutes);
 
@@ -118,6 +128,9 @@ app.use("/api/admin", adminRoutes);
 
 // Mount time slot routes
 app.use("/api/timeslots", timeSlotRoutes);
+
+// Mount Google Calendar routes
+app.use("/api/google-calendar", googleCalendarRoutes);
 
 var token = process.env.TOKEN || "token";
 var received_updates = [];

@@ -66,6 +66,25 @@ const userSchema = new mongoose.Schema({
     enum: ['not_connected', 'pending', 'connected'],
     default: 'not_connected'
   },
+  googleCalendarAccessToken: {
+    type: String,
+    required: false,
+    trim: true
+  },
+  googleCalendarRefreshToken: {
+    type: String,
+    required: false,
+    trim: true
+  },
+  googleCalendarTokenExpiry: {
+    type: Date,
+    required: false
+  },
+  googleCalendarIntegrationStatus: {
+    type: String,
+    enum: ['not_connected', 'pending', 'connected'],
+    default: 'not_connected'
+  },
   business: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Business',

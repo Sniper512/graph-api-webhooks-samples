@@ -6,7 +6,8 @@ const auth = (req, res, next) => {
   console.log('Authorization header:', req.header('Authorization') ? '[PRESENT]' : '[MISSING]');
 
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
+    // Check Authorization header first, then query parameter
+    const token = req.header('Authorization')?.replace('Bearer ', '') || req.query.token;
 
     if (!token) {
       console.log('❌ No token provided');
