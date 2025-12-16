@@ -26,6 +26,7 @@ const googleCalendarRoutes = require("../routes/googleCalendar");
 
 // Import models
 const Conversation = require("../models/Conversation");
+const { google } = require('googleapis');
 
 const app = express();
 
@@ -60,45 +61,6 @@ app.use(
 
 app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
 
-// Request logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  
-  console.log('\n🚀 INCOMING REQUEST');
-  console.log('📍 Method:', req.method);
-  console.log('🌐 URL:', req.url);
-  console.log('📋 Path:', req.path);
-  console.log('🔍 Query:', JSON.stringify(req.query, null, 2));
-  console.log('📦 Body:', JSON.stringify(req.body, null, 2));
-  console.log('🔐 Auth Header:', req.header('Authorization') ? '[PRESENT]' : '[MISSING]');
-  console.log('⏰ Timestamp:', new Date().toISOString());
-  
-  // Capture original json method
-  const originalJson = res.json;
-  
-  // Override json method to log response
-  res.json = function(data) {
-    const duration = Date.now() - start;
-    console.log('\n📤 OUTGOING RESPONSE');
-    console.log('📊 Status:', res.statusCode);
-    console.log('📦 Response Data:', JSON.stringify(data, null, 2));
-    console.log('⏱️ Duration:', duration + 'ms');
-    console.log('✅ Response sent\n');
-    
-    return originalJson.call(this, data);
-  };
-  
-  // Log response when it finishes
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log('\n🏁 REQUEST COMPLETED');
-    console.log('📊 Final Status:', res.statusCode);
-    console.log('⏱️ Total Duration:', duration + 'ms');
-    console.log('========================\n');
-  });
-  
-  next();
-});
 
 app.use(bodyParser.json());
 
@@ -135,6 +97,159 @@ app.use("/api/google-calendar", googleCalendarRoutes);
 var token = process.env.TOKEN || "token";
 var received_updates = [];
 
+// Tool functions for booking
+async function refreshAccessTokenIfNeeded(user) {
+  const now = new Date();
+  if (user.googleCalendarTokenExpiry && user.googleCalendarTokenExpiry <= now) {
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CALENDAR_CLIENT_ID,
+      process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+      process.env.GOOGLE_CALENDAR_REDIRECT_URI
+    );
+    oauth2Client.setCredentials({ refresh_token: user.googleCalendarRefreshToken });
+    const { credentials } = await oauth2Client.refreshAccessToken();
+    user.googleCalendarAccessToken = credentials.access_token;
+    user.googleCalendarTokenExpiry = new Date(credentials.expiry_date);
+    await user.save();
+  }
+  return user.googleCalendarAccessToken;
+}
+
+// Helper function to generate proper date ranges for booking
+function generateBookingDateRange() {
+  const today = new Date();
+  const startDate = new Date(today);
+  const endDate = new Date(today);
+  endDate.setDate(endDate.getDate() + 14); // Next 14 days
+  
+  const formatISODate = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  
+  return {
+    startDate: formatISODate(startDate),
+    endDate: formatISODate(endDate)
+  };
+}
+async function getAvailableBookingSlots(userId, startDate, endDate) {
+  try {
+    const Business = require("../models/Business");
+    const business = await Business.findOne({ user: userId });
+    if (!business) return { availableSlots: [] };
+    const TimeSlot = require("../models/TimeSlot");
+    const timeSlots = await TimeSlot.find({ business: business._id, isActive: true });
+    const User = require("../models/User");
+    const user = await User.findById(userId);
+    let bookings = [];
+    if (user && user.googleCalendarIntegrationStatus === 'connected') {
+      const accessToken = await refreshAccessTokenIfNeeded(user);
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CALENDAR_CLIENT_ID,
+        process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+        process.env.GOOGLE_CALENDAR_REDIRECT_URI
+      );
+      oauth2Client.setCredentials({ access_token: accessToken });
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+      const timeMin = new Date(startDate + 'T00:00:00Z').toISOString();
+      const timeMax = new Date(endDate + 'T23:59:59Z').toISOString();
+      const response = await calendar.events.list({
+        calendarId: 'primary',
+        timeMin,
+        timeMax,
+        singleEvents: true,
+        orderBy: 'startTime'
+      });
+      bookings = response.data.items.filter(event => {
+        const summary = (event.summary || '').toLowerCase();
+        const description = (event.description || '').toLowerCase();
+        return summary.includes('booking') || description.includes('booking');
+      });
+    }
+    const availableSlots = [];
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dayOfWeek = d.getDay();
+      const daySlots = timeSlots.filter(ts => ts.dayOfWeek === dayOfWeek);
+      for (const ts of daySlots) {
+        for (const slot of ts.slots) {
+          if (!slot.isActive) continue;
+          const slotStart = new Date(d.toISOString().split('T')[0] + 'T' + slot.startTime + ':00Z');
+          const slotEnd = new Date(d.toISOString().split('T')[0] + 'T' + slot.endTime + ':00Z');
+          let isAvailable = true;
+          for (const booking of bookings) {
+            const bStart = new Date(booking.start.dateTime || booking.start.date);
+            const bEnd = new Date(booking.end.dateTime || booking.end.date);
+            if (slotStart < bEnd && slotEnd > bStart) {
+              isAvailable = false;
+              break;
+            }
+          }
+          if (isAvailable) {
+            availableSlots.push({
+              date: d.toISOString().split('T')[0],
+              startTime: slot.startTime,
+              endTime: slot.endTime,
+              duration: slot.duration
+            });
+          }
+        }
+      }
+    }
+    return { availableSlots };
+  } catch (error) {
+    console.error('Error getting available slots:', error);
+    return { availableSlots: [] };
+  }
+}
+async function createBooking(userId, summary, start, end, description, attendeeEmail, attendeeName) {
+  try {
+    const User = require("../models/User");
+    const user = await User.findById(userId);
+    if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
+      return { error: "Google Calendar not connected" };
+    }
+    const accessToken = await refreshAccessTokenIfNeeded(user);
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CALENDAR_CLIENT_ID,
+      process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+      process.env.GOOGLE_CALENDAR_REDIRECT_URI
+    );
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    
+    // Get user's timezone from Google Calendar
+    const calendarInfo = await calendar.calendars.get({
+      calendarId: 'primary'
+    });
+    const timezone = calendarInfo.data.timeZone || 'UTC';
+    
+    const event = {
+      summary: `Booking: ${summary}`,
+      description,
+      start: {
+        dateTime: start,
+        timeZone: timezone
+      },
+      end: {
+        dateTime: end,
+        timeZone: timezone
+      },
+      attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName }] : []
+    };
+    const response = await calendar.events.insert({
+      calendarId: 'primary',
+      resource: event
+    });
+    return { eventId: response.data.id, status: 'created' };
+  } catch (error) {
+    console.error('Error creating booking:', error);
+    return { error: 'Failed to create booking' };
+  }
+}
 // OpenAI API Configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5";
@@ -187,6 +302,9 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 			}
 		}
 
+		// Generate proper date range for booking
+		const bookingDateRange = generateBookingDateRange();
+		
 		// Build messages array with conversation history
 		const messages = [
 			{
@@ -206,7 +324,8 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 					"CONTEXT AWARENESS: You have access to the full conversation history. " +
 					"Use previous messages to maintain context and provide relevant responses. " +
 					"Reference earlier parts of the conversation when appropriate." +
-					faqContent,
+					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS include the day of the week in the format: "Day, Month Date, Year" (e.g., "Monday, December 16, 2025"). DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.` +
+						faqContent,
 			},
 		];
 
@@ -222,33 +341,173 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 
 		// Add current user message
 		messages.push({
-			role: "user",
-			content: userMessage,
+		  role: "user",
+		  content: userMessage,
 		});
 
-		const requestBody = {
-			model: OPENAI_MODEL,
-			messages: messages,
-			max_tokens: 300,
-		};
+		// Function definitions for tool calls
+		const tools = [
+		  {
+		    type: "function",
+		    function: {
+		      name: "get_available_booking_slots",
+		      description: "Get available time slots for booking appointments with the business",
+		      parameters: {
+		        type: "object",
+		        properties: {
+		          startDate: { type: "string", description: "Start date in YYYY-MM-DD format" },
+		          endDate: { type: "string", description: "End date in YYYY-MM-DD format" }
+		        },
+		        required: ["startDate", "endDate"]
+		      }
+		    }
+		  },
+		  {
+		    type: "function",
+		    function: {
+		      name: "create_booking",
+		      description: "Create a new booking appointment on the calendar",
+		      parameters: {
+		        type: "object",
+		        properties: {
+		          summary: { type: "string", description: "Booking title or service type" },
+		          start: { type: "string", description: "Start time in ISO 8601 format (e.g., 2023-12-01T10:00:00Z)" },
+		          end: { type: "string", description: "End time in ISO 8601 format" },
+		          description: { type: "string", description: "Additional details about the booking" },
+		          attendeeEmail: { type: "string", description: "Email of the person booking" },
+		          attendeeName: { type: "string", description: "Name of the person booking" }
+		        },
+		        required: ["summary", "start", "end"]
+		      }
+		    }
+		  }
+		];
 
-		// Only add temperature if not using o1 models
-		if (!OPENAI_MODEL.startsWith("o1")) {
-			requestBody.temperature = 0.7;
+		// Function to make API call and handle responses
+		async function makeOpenAICall(msgs, toolCalls = null) {
+			const requestBody = {
+			  model: OPENAI_MODEL,
+			  messages: msgs,
+			  max_completion_tokens: 500,
+			};
+
+
+
+			// Add tools only if not in a function call response
+			if (!toolCalls) {
+				requestBody.tools = tools;
+			}
+
+			const response = await axios.post(
+				"https://api.openai.com/v1/chat/completions",
+				requestBody,
+				{
+					headers: {
+						Authorization: `Bearer ${OPENAI_API_KEY}`,
+						"Content-Type": "application/json",
+					},
+				}
+			);
+
+			return response.data;
 		}
 
-		const response = await axios.post(
-			"https://api.openai.com/v1/chat/completions",
-			requestBody,
-			{
-				headers: {
-					Authorization: `Bearer ${OPENAI_API_KEY}`,
-					"Content-Type": "application/json",
-				},
-			}
-		);
+		// Make initial API call
+		let response = await makeOpenAICall(messages);
+		let aiResponse = "";
+		let maxToolCalls = 3; // Prevent infinite loops
+		let toolCallCount = 0;
 
-		const aiResponse = response.data.choices[0].message.content;
+		// Handle function calls in a loop
+		while (response.choices[0].message.tool_calls &&
+			   response.choices[0].message.tool_calls.length > 0 &&
+			   toolCallCount < maxToolCalls) {
+			
+			toolCallCount++;
+			const choice = response.choices[0];
+			const toolCalls = choice.message.tool_calls;
+			
+			console.log(`\n🔧 Function call detected: ${toolCalls[0].function.name}`);
+			
+			// Add the assistant's message with tool calls to the conversation
+			messages.push(choice.message);
+			
+			// Execute each tool call and add results to messages
+			for (const toolCall of toolCalls) {
+				const functionName = toolCall.function.name;
+				const functionArgs = JSON.parse(toolCall.function.arguments || "{}");
+				
+				try {
+					let toolResult = "";
+					
+					if (functionName === "get_available_booking_slots") {
+						// Use provided dates or generate default range
+						let startDate = functionArgs.startDate;
+						let endDate = functionArgs.endDate;
+						
+						// Validate dates - if invalid or missing, use current year
+						const currentDate = new Date();
+						const currentYear = currentDate.getFullYear();
+						
+						if (!startDate || !endDate) {
+							const dateRange = generateBookingDateRange();
+							startDate = dateRange.startDate;
+							endDate = dateRange.endDate;
+						} else {
+							// Ensure dates use current year
+							const startYear = startDate.substring(0, 4);
+							const endYear = endDate.substring(0, 4);
+							
+							if (startYear !== currentYear.toString()) {
+								startDate = currentYear + startDate.substring(4);
+							}
+							if (endYear !== currentYear.toString()) {
+								endDate = currentYear + endDate.substring(4);
+							}
+						}
+						
+						const slots = await getAvailableBookingSlots(userId, startDate, endDate);
+						toolResult = JSON.stringify(slots);
+					} else if (functionName === "create_booking") {
+						const booking = await createBooking(
+							userId,
+							functionArgs.summary,
+							functionArgs.start,
+							functionArgs.end,
+							functionArgs.description || "",
+							functionArgs.attendeeEmail,
+							functionArgs.attendeeName
+						);
+						toolResult = JSON.stringify(booking);
+					} else {
+						toolResult = JSON.stringify({ error: "Unknown function" });
+					}
+					
+					// Add tool result to messages
+					messages.push({
+						role: "tool",
+						tool_call_id: toolCall.id,
+						content: toolResult
+					});
+					
+				} catch (toolError) {
+					console.error(`\n❌ Tool execution error:`, toolError);
+					messages.push({
+						role: "tool",
+						tool_call_id: toolCall.id,
+						content: JSON.stringify({ error: toolError.message || "Tool execution failed" })
+					});
+				}
+			}
+			
+			// Make another API call with tool results
+			response = await makeOpenAICall(messages, toolCalls);
+		}
+
+		// Get final response
+		const finalChoice = response.choices[0];
+		aiResponse = finalChoice.message.content || "I'm not sure how to respond to that.";
+
 		console.log(`\n✅ OpenAI Response:\n${aiResponse}\n`);
 
 		// Save both messages to database
