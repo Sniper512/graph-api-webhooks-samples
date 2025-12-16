@@ -12,6 +12,28 @@ const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CALENDAR_REDIRECT_URI
 );
 
+// Helper function to refresh access token if expired
+async function refreshAccessTokenIfNeeded(user) {
+  const now = new Date();
+  if (user.googleCalendarTokenExpiry && user.googleCalendarTokenExpiry <= now) {
+    console.log('🔄 Refreshing Google Calendar access token...');
+    try {
+      oauth2Client.setCredentials({
+        refresh_token: user.googleCalendarRefreshToken
+      });
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      user.googleCalendarAccessToken = credentials.access_token;
+      user.googleCalendarTokenExpiry = new Date(credentials.expiry_date);
+      await user.save();
+      console.log('✅ Access token refreshed successfully');
+    } catch (error) {
+      console.error('❌ Failed to refresh access token:', error);
+      throw new Error('Failed to refresh access token');
+    }
+  }
+  return user.googleCalendarAccessToken;
+}
+
 // Route to initiate Google Calendar OAuth flow
 router.get('/auth/google', auth, (req, res) => {
   const scopes = [
