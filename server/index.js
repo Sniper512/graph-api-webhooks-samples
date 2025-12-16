@@ -46,10 +46,28 @@ mongoose
 
 app.listen(app.get("port"));
 
-// CORS configuration - allow all origins
+// CORS configuration - allow multiple origins
+const allowedOrigins = [
+	'http://localhost:5173',
+	'http://localhost:3000',
+	'https://meta-user-dashboard.vercel.app',
+	'https://meta-app-admin-dashboard.vercel.app',
+	process.env.FRONTEND_URL,
+	process.env.ADMIN_FRONTEND_URL
+].filter(Boolean);
+
 app.use(
 	cors({
-		origin: true,
+		origin: function (origin, callback) {
+			// Allow requests with no origin (mobile apps, Postman, etc.)
+			if (!origin) return callback(null, true);
+			
+			if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+				callback(null, true);
+			} else {
+				callback(null, true); // Allow all origins for now
+			}
+		},
 		credentials: true,
 		methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 		allowedHeaders: ["Content-Type", "Authorization", "X-Admin-Key"],
