@@ -238,11 +238,54 @@ router.get('/bookings', auth, async (req, res) => {
        updated: event.updated
      }));
 
+   console.log(`📅 Bookings fetched for user ${userId}: ${bookings.length} bookings`);
+   if (bookings.length > 0) {
+     console.log('📝 First booking details:', bookings[0]);
+     console.log('👥 First booking attendees:', bookings[0].attendees);
+   }
+
    res.json({ bookings });
  } catch (error) {
    console.error('❌ Fetch Bookings Error:', error);
    res.status(500).json({ message: 'Failed to fetch bookings' });
  }
+});
+
+// Route to get user bookings from database
+router.get('/user-bookings', auth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const Booking = require('../models/Booking');
+
+    const bookings = await Booking.find({
+      userId,
+      status: 'active'
+    })
+    .populate('conversationId', 'senderId platform')
+    .sort({ createdAt: -1 })
+    .limit(50); // Limit to prevent large responses
+
+    console.log(`📋 Retrieved ${bookings.length} bookings for user ${userId}`);
+
+    res.json({
+      bookings: bookings.map(booking => ({
+        id: booking._id,
+        eventId: booking.eventId,
+        conversationId: booking.conversationId._id,
+        senderId: booking.senderId,
+        platform: booking.platform,
+        summary: booking.summary,
+        description: booking.description,
+        start: booking.start,
+        end: booking.end,
+        attendees: booking.attendees,
+        createdAt: booking.createdAt
+      }))
+    });
+  } catch (error) {
+    console.error('❌ Error fetching user bookings:', error);
+    res.status(500).json({ message: 'Failed to fetch bookings' });
+  }
 });
 
 // Route to create a calendar event

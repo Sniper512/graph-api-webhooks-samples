@@ -154,15 +154,23 @@ function generateBookingDateRange() {
 }
 async function getAvailableBookingSlots(userId, startDate, endDate) {
   try {
+    console.log(`🔍 Getting available slots for user ${userId}, dates: ${startDate} to ${endDate}`);
     const Business = require("../models/Business");
     const business = await Business.findOne({ user: userId });
+    console.log(`🏢 Business found:`, !!business);
     if (!business) return { availableSlots: [] };
+
     const TimeSlot = require("../models/TimeSlot");
     const timeSlots = await TimeSlot.find({ business: business._id, isActive: true });
+    console.log(`⏰ Time slots found: ${timeSlots.length}`);
+
     const User = require("../models/User");
     const user = await User.findById(userId);
+    console.log(`👤 User Google Calendar status:`, user?.googleCalendarIntegrationStatus);
+
     let bookings = [];
     if (user && user.googleCalendarIntegrationStatus === 'connected') {
+      console.log(`📅 Fetching existing bookings from Google Calendar...`);
       const accessToken = await refreshAccessTokenIfNeeded(user);
       const oauth2Client = new google.auth.OAuth2(
         process.env.GOOGLE_CALENDAR_CLIENT_ID,
@@ -173,6 +181,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
       const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
       const timeMin = new Date(startDate + 'T00:00:00Z').toISOString();
       const timeMax = new Date(endDate + 'T23:59:59Z').toISOString();
+      console.log(`📅 Calendar query range: ${timeMin} to ${timeMax}`);
       const response = await calendar.events.list({
         calendarId: 'primary',
         timeMin,
@@ -185,47 +194,68 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
         const description = (event.description || '').toLowerCase();
         return summary.includes('booking') || description.includes('booking');
       });
+      console.log(`📅 Existing bookings found: ${bookings.length}`);
     }
+
+    console.log(`🔄 Calculating available slots...`);
     const availableSlots = [];
     const start = new Date(startDate);
     const end = new Date(endDate);
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const dayOfWeek = d.getDay();
       const daySlots = timeSlots.filter(ts => ts.dayOfWeek === dayOfWeek);
+      console.log(`📅 Day ${d.toISOString().split('T')[0]} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]}): ${daySlots.length} time slots configured`);
+
+      if (daySlots.length === 0) continue;
+
       for (const ts of daySlots) {
+        console.log(`  ⏰ TimeSlot ID ${ts._id}: ${ts.slots.length} slots`);
         for (const slot of ts.slots) {
-          if (!slot.isActive) continue;
+          if (!slot.isActive) {
+            console.log(`    ❌ Slot ${slot.startTime}-${slot.endTime} is inactive`);
+            continue;
+          }
+          console.log(`    ✅ Slot ${slot.startTime}-${slot.endTime} (${slot.duration}min) is active`);
+
           const slotStart = new Date(d.toISOString().split('T')[0] + 'T' + slot.startTime + ':00Z');
           const slotEnd = new Date(d.toISOString().split('T')[0] + 'T' + slot.endTime + ':00Z');
+
           let isAvailable = true;
           for (const booking of bookings) {
             const bStart = new Date(booking.start.dateTime || booking.start.date);
             const bEnd = new Date(booking.end.dateTime || booking.end.date);
             if (slotStart < bEnd && slotEnd > bStart) {
+              console.log(`      ❌ Conflicts with booking: ${booking.summary} (${bStart.toISOString()} - ${bEnd.toISOString()})`);
               isAvailable = false;
               break;
             }
           }
+
           if (isAvailable) {
+            console.log(`      ✅ Available: ${d.toISOString().split('T')[0]} ${slot.startTime}-${slot.endTime}`);
             availableSlots.push({
               date: d.toISOString().split('T')[0],
               startTime: slot.startTime,
               endTime: slot.endTime,
               duration: slot.duration
             });
+          } else {
+            console.log(`      ❌ Not available: ${d.toISOString().split('T')[0]} ${slot.startTime}-${slot.endTime}`);
           }
         }
       }
     }
+    console.log(`✅ Available slots calculated: ${availableSlots.length}`);
     return { availableSlots };
   } catch (error) {
-    console.error('Error getting available slots:', error);
+    console.error('❌ Error getting available slots:', error);
     return { availableSlots: [] };
   }
 }
-async function createBooking(userId, summary, start, end, description, attendeeEmail, attendeeName) {
+async function createBooking(userId, conversationId, senderId, platform, summary, start, end, description, attendeeEmail, attendeeName) {
   try {
     const User = require("../models/User");
+    const Booking = require("../models/Booking");
     const user = await User.findById(userId);
     if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
       return { error: "Google Calendar not connected" };
@@ -238,13 +268,13 @@ async function createBooking(userId, summary, start, end, description, attendeeE
     );
     oauth2Client.setCredentials({ access_token: accessToken });
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-    
+
     // Get user's timezone from Google Calendar
     const calendarInfo = await calendar.calendars.get({
       calendarId: 'primary'
     });
     const timezone = calendarInfo.data.timeZone || 'UTC';
-    
+
     const event = {
       summary: `Booking: ${summary}`,
       description,
@@ -262,10 +292,109 @@ async function createBooking(userId, summary, start, end, description, attendeeE
       calendarId: 'primary',
       resource: event
     });
-    return { eventId: response.data.id, status: 'created' };
+
+    // Save booking to database
+    const booking = new Booking({
+      userId,
+      conversationId,
+      senderId,
+      platform,
+      eventId: response.data.id,
+      summary: `Booking: ${summary}`,
+      description,
+      start: {
+        dateTime: start,
+        timeZone: timezone
+      },
+      end: {
+        dateTime: end,
+        timeZone: timezone
+      },
+      attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName, responseStatus: 'needsAction' }] : []
+    });
+
+    await booking.save();
+    console.log(`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`);
+
+    return {
+      eventId: response.data.id,
+      bookingId: booking._id,
+      status: 'created'
+    };
   } catch (error) {
     console.error('Error creating booking:', error);
     return { error: 'Failed to create booking' };
+  }
+}
+async function cancelBooking(userId, eventId) {
+  try {
+    const User = require("../models/User");
+    const Booking = require("../models/Booking");
+    const user = await User.findById(userId);
+    if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
+      return { error: "Google Calendar not connected" };
+    }
+    const accessToken = await refreshAccessTokenIfNeeded(user);
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CALENDAR_CLIENT_ID,
+      process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+      process.env.GOOGLE_CALENDAR_REDIRECT_URI
+    );
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // Delete the event from Google Calendar
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: eventId
+    });
+
+    // Update booking status in database
+    const booking = await Booking.findOneAndUpdate(
+      { eventId, userId },
+      {
+        status: 'cancelled',
+        cancelledAt: new Date()
+      },
+      { new: true }
+    );
+
+    if (booking) {
+      console.log(`💾 Booking cancelled in database: ${booking._id}`);
+    }
+
+    return { eventId, status: 'cancelled' };
+  } catch (error) {
+    console.error('Error cancelling booking:', error);
+    return { error: 'Failed to cancel booking' };
+  }
+}
+async function listUserBookings(conversationId, senderId, userId) {
+  try {
+    const Booking = require("../models/Booking");
+    const bookings = await Booking.find({
+      conversationId,
+      senderId,
+      userId,
+      status: 'active'
+    }).sort({ createdAt: -1 });
+
+    console.log(`📋 Found ${bookings.length} active bookings for conversation ${conversationId}`);
+
+    return {
+      bookings: bookings.map(booking => ({
+        id: booking._id,
+        eventId: booking.eventId,
+        summary: booking.summary,
+        start: booking.start,
+        end: booking.end,
+        attendees: booking.attendees,
+        createdAt: booking.createdAt
+      }))
+    };
+  } catch (error) {
+    console.error('Error listing user bookings:', error);
+    return { error: 'Failed to list bookings' };
   }
 }
 // OpenAI API Configuration
@@ -342,7 +471,24 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 					"CONTEXT AWARENESS: You have access to the full conversation history. " +
 					"Use previous messages to maintain context and provide relevant responses. " +
 					"Reference earlier parts of the conversation when appropriate." +
-					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS include the day of the week in the format: "Day, Month Date, Year" (e.g., "Monday, December 16, 2025"). DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.` +
+					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS include the day of the week in the format: "Day, Month Date, Year" (e.g., "Monday, December 16, 2025"). DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
+
+CANCELLATION WORKFLOW - EXECUTE THIS STEP BY STEP:
+STEP 1: When user mentions cancelling a booking, FIRST call list_user_bookings tool to get their current bookings.
+STEP 2: After receiving booking data from list_user_bookings, check if user wants to cancel:
+			- If they have 1 booking and want to cancel it → CALL cancel_booking WITH eventId from the booking data
+			- If they have multiple bookings → show list and ask which one
+			- If they provide eventId directly → CALL cancel_booking immediately
+
+AVAILABLE TOOLS FOR CANCELLATION:
+- list_user_bookings: Gets user's current bookings (returns array with eventId for each)
+- cancel_booking: Cancels a booking (requires eventId parameter)
+
+CRITICAL RULES:
+- NEVER claim cancellation is done unless you actually CALL cancel_booking tool
+- After calling cancel_booking, tell user "Your booking has been cancelled"
+- If cancel_booking fails, tell user there was an error and they should contact support
+- Always use the eventId returned by list_user_bookings when calling cancel_booking` +
 						faqContent,
 			},
 		];
@@ -398,6 +544,32 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 		        required: ["summary", "start", "end"]
 		      }
 		    }
+		  },
+		  {
+		    type: "function",
+		    function: {
+		      name: "cancel_booking",
+		      description: "Cancel an existing booking appointment",
+		      parameters: {
+		        type: "object",
+		        properties: {
+		          eventId: { type: "string", description: "The Google Calendar event ID of the booking to cancel" }
+		        },
+		        required: ["eventId"]
+		      }
+		    }
+		  },
+		  {
+		    type: "function",
+		    function: {
+		      name: "list_user_bookings",
+		      description: "List all active bookings for the current conversation/user",
+		      parameters: {
+		        type: "object",
+		        properties: {},
+		        required: []
+		      }
+		    }
 		  }
 		];
 
@@ -436,59 +608,80 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 		let maxToolCalls = 3; // Prevent infinite loops
 		let toolCallCount = 0;
 
-		// Handle function calls in a loop
+		// Handle function calls in a loop to allow multiple rounds without intermediate messaging
 		while (response.choices[0].message.tool_calls &&
-			   response.choices[0].message.tool_calls.length > 0 &&
-			   toolCallCount < maxToolCalls) {
-			
+			response.choices[0].message.tool_calls.length > 0 &&
+			toolCallCount < maxToolCalls) {
+
 			toolCallCount++;
 			const choice = response.choices[0];
 			const toolCalls = choice.message.tool_calls;
-			
-			console.log(`\n🔧 Function call detected: ${toolCalls[0].function.name}`);
-			
+
+			console.log(`\n🔧 Function calls detected (round ${toolCallCount}): ${toolCalls.length} calls`);
+			toolCalls.forEach((call, index) => {
+				console.log(`  ${index + 1}. ${call.function.name}`);
+			});
+
 			// Add the assistant's message with tool calls to the conversation
 			messages.push(choice.message);
-			
-			// Execute each tool call and add results to messages
+
+			// Execute ALL tool calls in sequence and collect results
+			console.log(`🔧 Executing ${toolCalls.length} tool calls in sequence...`);
 			for (const toolCall of toolCalls) {
 				const functionName = toolCall.function.name;
 				const functionArgs = JSON.parse(toolCall.function.arguments || "{}");
-				
+
 				try {
 					let toolResult = "";
-					
+
 					if (functionName === "get_available_booking_slots") {
+						console.log(`🔧 Executing get_available_booking_slots with args:`, functionArgs);
 						// Use provided dates or generate default range
 						let startDate = functionArgs.startDate;
 						let endDate = functionArgs.endDate;
-						
+
 						// Validate dates - if invalid or missing, use current year
 						const currentDate = new Date();
 						const currentYear = currentDate.getFullYear();
-						
+
 						if (!startDate || !endDate) {
 							const dateRange = generateBookingDateRange();
 							startDate = dateRange.startDate;
 							endDate = dateRange.endDate;
+							console.log(`📅 Using generated date range: ${startDate} to ${endDate}`);
 						} else {
-							// Ensure dates use current year
-							const startYear = startDate.substring(0, 4);
-							const endYear = endDate.substring(0, 4);
-							
-							if (startYear !== currentYear.toString()) {
-								startDate = currentYear + startDate.substring(4);
-							}
-							if (endYear !== currentYear.toString()) {
-								endDate = currentYear + endDate.substring(4);
+							console.log(`📅 Using provided date range: ${startDate} to ${endDate}`);
+
+							// Basic validation - ensure dates are not too far in past/future
+							const start = new Date(startDate);
+							const end = new Date(endDate);
+							const now = new Date();
+							const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+							const oneYearFromNow = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+
+							if (start < oneYearAgo || start > oneYearFromNow || end < oneYearAgo || end > oneYearFromNow) {
+								console.log(`❌ Date range too far from current date, using default range`);
+								const dateRange = generateBookingDateRange();
+								startDate = dateRange.startDate;
+								endDate = dateRange.endDate;
+							} else if (end <= start) {
+								console.log(`❌ Invalid date range: end (${endDate}) <= start (${startDate}), using default range`);
+								const dateRange = generateBookingDateRange();
+								startDate = dateRange.startDate;
+								endDate = dateRange.endDate;
+								console.log(`🔄 Using fallback date range: ${startDate} to ${endDate}`);
 							}
 						}
-						
+
 						const slots = await getAvailableBookingSlots(userId, startDate, endDate);
 						toolResult = JSON.stringify(slots);
+						console.log(`📅 Available slots result:`, slots);
 					} else if (functionName === "create_booking") {
 						const booking = await createBooking(
 							userId,
+							conversation._id,
+							senderId,
+							platform,
 							functionArgs.summary,
 							functionArgs.start,
 							functionArgs.end,
@@ -497,17 +690,29 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 							functionArgs.attendeeName
 						);
 						toolResult = JSON.stringify(booking);
+					} else if (functionName === "cancel_booking") {
+						console.log(`🔧 Executing cancel_booking with eventId: ${functionArgs.eventId}`);
+						const cancellation = await cancelBooking(userId, functionArgs.eventId);
+						toolResult = JSON.stringify(cancellation);
+						console.log(`📅 Cancellation result:`, cancellation);
+						console.log(`💾 Booking cancelled in database`);
+					} else if (functionName === "list_user_bookings") {
+						console.log(`🔧 Executing list_user_bookings for conversation ${conversation._id}`);
+						const bookings = await listUserBookings(conversation._id, senderId, userId);
+						toolResult = JSON.stringify(bookings);
+						console.log(`📋 User bookings result: ${bookings.bookings?.length || 0} bookings`);
 					} else {
 						toolResult = JSON.stringify({ error: "Unknown function" });
 					}
-					
+
 					// Add tool result to messages
 					messages.push({
 						role: "tool",
 						tool_call_id: toolCall.id,
 						content: toolResult
 					});
-					
+					console.log(`🔧 Tool result added to messages:`, toolResult);
+
 				} catch (toolError) {
 					console.error(`\n❌ Tool execution error:`, toolError);
 					messages.push({
@@ -517,16 +722,22 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 					});
 				}
 			}
-			
-			// Make another API call with tool results
-			response = await makeOpenAICall(messages, toolCalls);
+
+			// Make API call with tool results (may result in more tool calls or final response)
+			console.log(`🤖 Making API call with tool results (round ${toolCallCount})...`);
+			response = await makeOpenAICall(messages);
 		}
 
 		// Get final response
 		const finalChoice = response.choices[0];
 		aiResponse = finalChoice.message.content || "I'm not sure how to respond to that.";
 
-		console.log(`\n✅ OpenAI Response:\n${aiResponse}\n`);
+		console.log(`\n✅ Final OpenAI Response:\n${aiResponse}\n`);
+		console.log(`📊 Response metadata:`, {
+			finish_reason: finalChoice.finish_reason,
+			has_tool_calls: !!finalChoice.message.tool_calls,
+			content_length: aiResponse.length
+		});
 
 		// Save both messages to database
 		await conversation.addMessage('user', userMessage);
