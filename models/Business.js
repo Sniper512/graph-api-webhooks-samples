@@ -40,6 +40,18 @@ const businessSchema = new mongoose.Schema({
   address: {
     type: String,
     trim: true
+  },
+  // FAQ extraction status tracking
+  faqExtractionStatus: {
+    type: String,
+    enum: ['idle', 'ongoing', 'completed', 'failed', 'stopped'],
+    default: 'idle'
+  },
+  faqExtractionUpdatedAt: {
+    type: Date
+  },
+  faqExtractionTaskId: {
+    type: String
   }
 }, {
   timestamps: true

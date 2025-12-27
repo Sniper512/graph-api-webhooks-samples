@@ -6,6 +6,45 @@ const axios = require('axios');
 
 const router = express.Router();
 
+// Get FAQ extraction status for authenticated user
+router.get('/extraction-status', auth, async (req, res) => {
+  console.log('🔍 FAQ EXTRACTION STATUS CHECK ENDPOINT HIT!');
+  console.log('User ID:', req.user.userId);
+  
+  try {
+    const business = await Business.findOne({ user: req.user.userId });
+
+    if (!business) {
+      console.log('❌ Business not found for user:', req.user.userId);
+      return res.status(404).json({
+        message: 'Business information not found.',
+        status: null
+      });
+    }
+
+    const status = business.faqExtractionStatus || 'idle';
+    const updatedAt = business.faqExtractionUpdatedAt;
+    const taskId = business.faqExtractionTaskId;
+
+    console.log(`✅ Retrieved status "${status}" for user ${req.user.userId}`);
+    
+    res.json({
+      status: status,
+      updatedAt: updatedAt,
+      taskId: taskId,
+      message: status === 'idle' ? 'No extraction in progress' : `Current status: ${status}`
+    });
+
+  } catch (error) {
+    console.error('Get FAQ extraction status error:', error);
+    res.status(500).json({
+      message: 'Failed to retrieve FAQ extraction status.',
+      error: error.message,
+      status: null
+    });
+  }
+});
+
 // Get all FAQs for the authenticated user
 router.get('/', auth, async (req, res) => {
   try {
@@ -212,7 +251,7 @@ router.post('/push-extracted', async (req, res) => {
     }
 
     console.log(`✅ Processing ${faqs.length} FAQs for user ${userId}`);
-
+    
     const savedFaqs = [];
     const errors = [];
 
@@ -260,6 +299,108 @@ router.post('/push-extracted', async (req, res) => {
     console.error('Push extracted FAQs error:', error);
     res.status(500).json({
       message: 'Failed to process extracted FAQs.',
+      error: error.message
+    });
+  }
+});
+
+// Get FAQ extraction status for authenticated user
+router.get('/extraction-status', auth, async (req, res) => {
+  console.log('🔍 FAQ EXTRACTION STATUS CHECK ENDPOINT HIT!');
+  console.log('User ID:', req.user.userId);
+  
+  try {
+    const business = await Business.findOne({ user: req.user.userId });
+
+    if (!business) {
+      console.log('❌ Business not found for user:', req.user.userId);
+      return res.status(404).json({
+        message: 'Business information not found.',
+        status: null
+      });
+    }
+
+    const status = business.faqExtractionStatus || 'idle';
+    const updatedAt = business.faqExtractionUpdatedAt;
+    const taskId = business.faqExtractionTaskId;
+
+    console.log(`✅ Retrieved status "${status}" for user ${req.user.userId}`);
+    
+    res.json({
+      status: status,
+      updatedAt: updatedAt,
+      taskId: taskId,
+      message: status === 'idle' ? 'No extraction in progress' : `Current status: ${status}`
+    });
+
+  } catch (error) {
+    console.error('Get FAQ extraction status error:', error);
+    res.status(500).json({
+      message: 'Failed to retrieve FAQ extraction status.',
+      error: error.message,
+      status: null
+    });
+  }
+});
+
+// Update FAQ extraction status
+router.post('/update-status', async (req, res) => {
+  console.log('🔄 FAQ EXTRACTION STATUS UPDATE ENDPOINT HIT!');
+  console.log('Request body:', req.body);
+  
+  try {
+    const { userId, status, taskId } = req.body;
+
+    if (!userId || !status) {
+      console.log('❌ Missing required fields:', { userId: !!userId, status: !!status });
+      return res.status(400).json({
+        message: 'userId and status are required.',
+        received: { userId, status }
+      });
+    }
+
+    // Validate status values
+    const validStatuses = ['ongoing', 'completed', 'failed', 'stopped'];
+    if (!validStatuses.includes(status)) {
+      console.log('❌ Invalid status:', status);
+      return res.status(400).json({
+        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`,
+        received: { status }
+      });
+    }
+
+    // Update business record with FAQ extraction status
+    const business = await Business.findOneAndUpdate(
+      { user: userId },
+      {
+        $set: {
+          faqExtractionStatus: status,
+          faqExtractionUpdatedAt: new Date(),
+          ...(taskId && { faqExtractionTaskId: taskId })
+        }
+      },
+      { new: true }
+    );
+
+    if (!business) {
+      console.log('❌ Business not found for user:', userId);
+      return res.status(404).json({
+        message: 'Business not found for the provided user.'
+      });
+    }
+
+    console.log(`✅ Successfully updated FAQ extraction status to "${status}" for user ${userId}`);
+    
+    res.json({
+      message: 'FAQ extraction status updated successfully.',
+      status: status,
+      updatedAt: business.faqExtractionUpdatedAt
+    });
+
+  } catch (error) {
+    console.error('Update FAQ extraction status error:', error);
+    res.status(500).json({
+      message: 'Failed to update FAQ extraction status.',
       error: error.message
     });
   }
