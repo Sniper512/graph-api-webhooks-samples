@@ -28,7 +28,14 @@ async function refreshAccessTokenIfNeeded(user) {
       console.log('✅ Access token refreshed successfully');
     } catch (error) {
       console.error('❌ Failed to refresh access token:', error);
-      throw new Error('Failed to refresh access token');
+      // Mark integration as disconnected if refresh fails
+      user.googleCalendarIntegrationStatus = 'disconnected';
+      user.googleCalendarAccessToken = null;
+      user.googleCalendarRefreshToken = null;
+      user.googleCalendarTokenExpiry = null;
+      await user.save();
+      console.log('✅ User calendar integration status updated to disconnected');
+      throw new Error('Google Calendar authentication expired. Please reconnect.');
     }
   }
   return user.googleCalendarAccessToken;
@@ -187,68 +194,92 @@ router.get('/events', auth, async (req, res) => {
 
 // Route to fetch bookings only
 router.get('/bookings', auth, async (req, res) => {
- try {
-   const userId = req.user.userId;
-   const user = await User.findById(userId);
-   if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
-     return res.status(400).json({ message: 'Google Calendar not connected' });
-   }
+  const userId = req.user.userId; // Declare userId outside try block
+  try {
+    const user = await User.findById(userId);
+    if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
+      return res.status(400).json({ message: 'Google Calendar not connected' });
+    }
 
-   // Refresh token if needed
-   const accessToken = await refreshAccessTokenIfNeeded(user);
+    // Refresh token if needed
+    const accessToken = await refreshAccessTokenIfNeeded(user);
 
-   // Set credentials
-   oauth2Client.setCredentials({ access_token: accessToken });
+    // Set credentials
+    oauth2Client.setCredentials({ access_token: accessToken });
 
-   // Get calendar API
-   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    // Get calendar API
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-   // Get query params
-   const timeMin = req.query.timeMin || new Date().toISOString();
-   const timeMax = req.query.timeMax;
-   const maxResults = parseInt(req.query.maxResults) || 250;
+    // Get query params
+    const timeMin = req.query.timeMin || new Date().toISOString();
+    const timeMax = req.query.timeMax;
+    const maxResults = parseInt(req.query.maxResults) || 250;
 
-   // Fetch events
-   const response = await calendar.events.list({
-     calendarId: 'primary',
-     timeMin,
-     timeMax,
-     maxResults,
-     singleEvents: true,
-     orderBy: 'startTime'
-   });
+    // Fetch events
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin,
+      timeMax,
+      maxResults,
+      singleEvents: true,
+      orderBy: 'startTime'
+    });
 
-   // Filter bookings: events where summary or description contains 'booking' (case insensitive)
-   const bookings = response.data.items
-     .filter(event => {
-       const summary = (event.summary || '').toLowerCase();
-       const description = (event.description || '').toLowerCase();
-       return summary.includes('booking') || description.includes('booking');
-     })
-     .map(event => ({
-       id: event.id,
-       summary: event.summary,
-       description: event.description,
-       start: event.start,
-       end: event.end,
-       status: event.status,
-       location: event.location,
-       attendees: event.attendees,
-       created: event.created,
-       updated: event.updated
-     }));
+    // Filter bookings: events where summary or description contains 'booking' (case insensitive)
+    const bookings = response.data.items
+      .filter(event => {
+        const summary = (event.summary || '').toLowerCase();
+        const description = (event.description || '').toLowerCase();
+        return summary.includes('booking') || description.includes('booking');
+      })
+      .map(event => ({
+        id: event.id,
+        summary: event.summary,
+        description: event.description,
+        start: event.start,
+        end: event.end,
+        status: event.status,
+        location: event.location,
+        attendees: event.attendees,
+        created: event.created,
+        updated: event.updated
+      }));
 
-   console.log(`📅 Bookings fetched for user ${userId}: ${bookings.length} bookings`);
-   if (bookings.length > 0) {
-     console.log('📝 First booking details:', bookings[0]);
-     console.log('👥 First booking attendees:', bookings[0].attendees);
-   }
+    console.log(`📅 Bookings fetched for user ${userId}: ${bookings.length} bookings`);
+    if (bookings.length > 0) {
+      console.log('📝 First booking details:', bookings[0]);
+      console.log('👥 First booking attendees:', bookings[0].attendees);
+    }
 
-   res.json({ bookings });
- } catch (error) {
-   console.error('❌ Fetch Bookings Error:', error);
-   res.status(500).json({ message: 'Failed to fetch bookings' });
- }
+    res.json({ bookings });
+  } catch (error) {
+    console.error('❌ Fetch Bookings Error:', error);
+
+    // Check if it's an authentication error (401 Unauthorized)
+    if (error.code === 401 || error.status === 401 || (error.response && error.response.status === 401)) {
+      console.log('🔐 Authentication error detected - updating user calendar status to disconnected');
+
+      try {
+        // Update user's Google Calendar integration status to disconnected
+        await User.findByIdAndUpdate(userId, {
+          googleCalendarIntegrationStatus: 'disconnected',
+          googleCalendarAccessToken: null,
+          googleCalendarRefreshToken: null,
+          googleCalendarTokenExpiry: null
+        });
+        console.log('✅ User calendar integration status updated to disconnected');
+      } catch (updateError) {
+        console.error('❌ Failed to update user calendar status:', updateError);
+      }
+
+      return res.status(401).json({
+        message: 'Google Calendar authentication expired. Please reconnect your Google Calendar.',
+        code: 'AUTH_EXPIRED'
+      });
+    }
+
+    res.status(500).json({ message: 'Failed to fetch bookings' });
+  }
 });
 
 // Route to get user bookings from database

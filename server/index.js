@@ -119,16 +119,27 @@ var received_updates = [];
 async function refreshAccessTokenIfNeeded(user) {
   const now = new Date();
   if (user.googleCalendarTokenExpiry && user.googleCalendarTokenExpiry <= now) {
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CALENDAR_CLIENT_ID,
-      process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-      process.env.GOOGLE_CALENDAR_REDIRECT_URI
-    );
-    oauth2Client.setCredentials({ refresh_token: user.googleCalendarRefreshToken });
-    const { credentials } = await oauth2Client.refreshAccessToken();
-    user.googleCalendarAccessToken = credentials.access_token;
-    user.googleCalendarTokenExpiry = new Date(credentials.expiry_date);
-    await user.save();
+    try {
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CALENDAR_CLIENT_ID,
+        process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+        process.env.GOOGLE_CALENDAR_REDIRECT_URI
+      );
+      oauth2Client.setCredentials({ refresh_token: user.googleCalendarRefreshToken });
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      user.googleCalendarAccessToken = credentials.access_token;
+      user.googleCalendarTokenExpiry = new Date(credentials.expiry_date);
+      await user.save();
+    } catch (error) {
+      console.error('❌ Failed to refresh Google Calendar access token:', error);
+      // Mark integration as disconnected if refresh fails
+      user.googleCalendarIntegrationStatus = 'disconnected';
+      user.googleCalendarAccessToken = null;
+      user.googleCalendarRefreshToken = null;
+      user.googleCalendarTokenExpiry = null;
+      await user.save();
+      throw new Error('Google Calendar authentication expired. Please reconnect.');
+    }
   }
   return user.googleCalendarAccessToken;
 }
@@ -327,47 +338,40 @@ async function createBooking(userId, conversationId, senderId, platform, summary
   }
 }
 async function cancelBooking(userId, eventId) {
-  try {
-    const User = require("../models/User");
-    const Booking = require("../models/Booking");
-    const user = await User.findById(userId);
-    if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
-      return { error: "Google Calendar not connected" };
-    }
-    const accessToken = await refreshAccessTokenIfNeeded(user);
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CALENDAR_CLIENT_ID,
-      process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-      process.env.GOOGLE_CALENDAR_REDIRECT_URI
-    );
-    oauth2Client.setCredentials({ access_token: accessToken });
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+   try {
+      const User = require("../models/User");
+      const Booking = require("../models/Booking");
+      const user = await User.findById(userId);
+      if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
+         return { error: "Google Calendar not connected" };
+      }
+      const accessToken = await refreshAccessTokenIfNeeded(user);
+      const oauth2Client = new google.auth.OAuth2(
+         process.env.GOOGLE_CALENDAR_CLIENT_ID,
+         process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+         process.env.GOOGLE_CALENDAR_REDIRECT_URI
+      );
+      oauth2Client.setCredentials({ access_token: accessToken });
+      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-    // Delete the event from Google Calendar
-    await calendar.events.delete({
-      calendarId: 'primary',
-      eventId: eventId
-    });
+      // Delete the event from Google Calendar
+      await calendar.events.delete({
+         calendarId: 'primary',
+         eventId: eventId
+      });
 
-    // Update booking status in database
-    const booking = await Booking.findOneAndUpdate(
-      { eventId, userId },
-      {
-        status: 'cancelled',
-        cancelledAt: new Date()
-      },
-      { new: true }
-    );
+      // Delete booking from database
+      const booking = await Booking.findOneAndDelete({ eventId, userId });
 
-    if (booking) {
-      console.log(`💾 Booking cancelled in database: ${booking._id}`);
-    }
+      if (booking) {
+         console.log(`💾 Booking deleted from database: ${booking._id}`);
+      }
 
-    return { eventId, status: 'cancelled' };
-  } catch (error) {
-    console.error('Error cancelling booking:', error);
-    return { error: 'Failed to cancel booking' };
-  }
+      return { eventId, status: 'cancelled' };
+   } catch (error) {
+      console.error('Error cancelling booking:', error);
+      return { error: 'Failed to cancel booking' };
+   }
 }
 async function listUserBookings(conversationId, senderId, userId) {
   try {
@@ -458,19 +462,7 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 				role: "system",
 				content:
 					`You are representing ${businessInfo}. ` +
-					"You are a helpful assistant that answers questions about the business. " +
-					"Use ONLY the following FAQs to answer questions when possible. " +
-					"IMPORTANT: Keep your responses concise and under 2000 characters total. " +
-					"If providing multiple FAQ answers, limit to 2-3 most relevant ones. " +
-					"Be helpful but brief - Instagram has message length limits. " +
-					"CRITICAL: Never use any external knowledge, training data, or generic information. " +
-					"If you don't have specific information about something in the provided business info or FAQs, " +
-					"respond ONLY with: 'I don't have that specific information right now. " +
-					"One of our team members will connect with you shortly to provide the details you need.' " +
-					"Do NOT provide ANY generic, assumed, or external information about addresses, or businesses. " +
-					"CONTEXT AWARENESS: You have access to the full conversation history. " +
-					"Use previous messages to maintain context and provide relevant responses. " +
-					"Reference earlier parts of the conversation when appropriate." +
+					"You are a helpful assistant that handles booking requests and answers questions about the business. " +
 					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS include the day of the week in the format: "Day, Month Date, Year" (e.g., "Monday, December 16, 2025"). DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
 
 CANCELLATION WORKFLOW - EXECUTE THIS STEP BY STEP:
@@ -488,7 +480,9 @@ CRITICAL RULES:
 - NEVER claim cancellation is done unless you actually CALL cancel_booking tool
 - After calling cancel_booking, tell user "Your booking has been cancelled"
 - If cancel_booking fails, tell user there was an error and they should contact support
-- Always use the eventId returned by list_user_bookings when calling cancel_booking` +
+- Always use the eventId returned by list_user_bookings when calling cancel_booking
+
+GENERAL QUESTIONS: For questions about the business that are not booking-related, use ONLY the following FAQs to answer when possible. IMPORTANT: Keep your responses concise and under 2000 characters total. If providing multiple FAQ answers, limit to 2-3 most relevant ones. Be helpful but brief - Instagram has message length limits. CRITICAL: Never use any external knowledge, training data, or generic information. If you don't have specific information about something in the provided business info or FAQs, respond ONLY with: 'I don't have that specific information right now. One of our team members will connect with you shortly to provide the details you need.' Do NOT provide ANY generic, assumed, or external information about addresses, or businesses. CONTEXT AWARENESS: You have access to the full conversation history. Use previous messages to maintain context and provide relevant responses. Reference earlier parts of the conversation when appropriate.` +
 						faqContent,
 			},
 		];
