@@ -266,8 +266,9 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
             const appointmentStartTime = minutesToTime(currentMinutes);
             const appointmentEndTime = minutesToTime(currentMinutes + duration);
             
-            const appointmentStart = new Date(d.toISOString().split('T')[0] + 'T' + appointmentStartTime + ':00Z');
-            const appointmentEnd = new Date(d.toISOString().split('T')[0] + 'T' + appointmentEndTime + ':00Z');
+            // Create dates without 'Z' so times are in local timezone, not UTC
+            const appointmentStart = new Date(d.toISOString().split('T')[0] + 'T' + appointmentStartTime + ':00');
+            const appointmentEnd = new Date(d.toISOString().split('T')[0] + 'T' + appointmentEndTime + ':00');
             
             // Count bookings that overlap with THIS specific appointment slot
             let bookingsInAppointment = 0;
