@@ -115,14 +115,25 @@ router.get('/auth/google/callback', async (req, res) => {
     console.log('✅ Google OAuth Callback: User found:', user.email);
     
     console.log('🔄 Google OAuth Callback: Saving tokens to user record...');
-    
+
+    // Fetch user info to get email
+    try {
+      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+      const userInfo = await oauth2.userinfo.get();
+      user.googleCalendarEmail = userInfo.data.email;
+      console.log('✅ Google Calendar email fetched:', userInfo.data.email);
+    } catch (emailError) {
+      console.error('⚠️ Failed to fetch Google email:', emailError);
+      // Continue even if email fetch fails
+    }
+
     user.googleCalendarAccessToken = tokens.access_token;
     user.googleCalendarRefreshToken = tokens.refresh_token;
     user.googleCalendarTokenExpiry = new Date(tokens.expiry_date);
     user.googleCalendarIntegrationStatus = 'connected';
-    
+
     await user.save();
-    
+
     console.log('✅ Google OAuth Callback: Tokens saved to user record');
     
     // Redirect the user to the bookings page
@@ -402,6 +413,54 @@ router.post('/events', auth, async (req, res) => {
    console.error('❌ API: Create Event Error:', error);
    res.status(500).json({ message: 'Failed to create calendar event' });
  }
+});
+
+// Disconnect Google Calendar
+router.post('/disconnect', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    console.log('🔄 Disconnecting Google Calendar for user:', user.email);
+
+    // Optionally revoke the token with Google
+    if (user.googleCalendarAccessToken) {
+      try {
+        oauth2Client.setCredentials({
+          access_token: user.googleCalendarAccessToken
+        });
+        await oauth2Client.revokeCredentials();
+        console.log('✅ Google Calendar token revoked');
+      } catch (revokeError) {
+        console.error('⚠️ Failed to revoke Google token:', revokeError);
+        // Continue with disconnect even if revoke fails
+      }
+    }
+
+    // Clear all Google Calendar data
+    user.googleCalendarAccessToken = null;
+    user.googleCalendarRefreshToken = null;
+    user.googleCalendarTokenExpiry = null;
+    user.googleCalendarEmail = null;
+    user.googleCalendarIntegrationStatus = 'not_connected';
+
+    await user.save();
+
+    console.log('✅ Google Calendar disconnected successfully');
+
+    res.json({
+      message: 'Google Calendar disconnected successfully',
+      googleCalendarIntegrationStatus: 'not_connected'
+    });
+  } catch (error) {
+    console.error('❌ Disconnect Google Calendar error:', error);
+    res.status(500).json({
+      message: 'Failed to disconnect Google Calendar'
+    });
+  }
 });
 
 module.exports = router;
