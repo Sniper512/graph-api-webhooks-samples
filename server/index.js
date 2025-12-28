@@ -251,9 +251,13 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
           }
 
           if (isAvailable) {
-            console.log(`      ✅ Available: ${d.toISOString().split('T')[0]} ${slot.startTime}-${slot.endTime}`);
+            const dayOfWeek = d.getDay();
+            const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+            console.log(`      ✅ Available: ${d.toISOString().split('T')[0]} (${dayName}) ${slot.startTime}-${slot.endTime}`);
             availableSlots.push({
               date: d.toISOString().split('T')[0],
+              dayOfWeek: dayOfWeek,
+              dayName: dayName,
               startTime: slot.startTime,
               endTime: slot.endTime,
               duration: slot.duration
@@ -471,7 +475,7 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 				content:
 					`You are representing ${businessInfo}. ` +
 					"You are a helpful assistant that handles booking requests and answers questions about the business. " +
-					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS include the day of the week in the format: "Day, Month Date, Year" (e.g., "Monday, December 16, 2025"). DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
+					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS use the exact 'dayName' field provided in the tool response (e.g., if the response shows dayName: "Monday" and date: "2025-12-16", present it as "Monday, December 16, 2025"). NEVER calculate or guess the day name yourself - always use the dayName from the response. DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
 
 CANCELLATION WORKFLOW - EXECUTE THIS STEP BY STEP:
 STEP 1: When user mentions cancelling a booking, FIRST call list_user_bookings tool to get their current bookings.
