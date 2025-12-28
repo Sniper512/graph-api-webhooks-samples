@@ -263,12 +263,26 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
           
           // Create individual appointment slots (e.g., 9:00-9:30, 9:30-10:00, etc.)
           for (let currentMinutes = startMinutes; currentMinutes + duration <= endMinutes; currentMinutes += duration) {
+            // Helper to get timezone offset (e.g., "+05:00")
+            const getTzOffset = (date) => {
+              try {
+                const tz = businessInfo.timezone || 'UTC';
+                const str = date.toLocaleString('en-US', { timeZone: tz, timeZoneName: 'longOffset' });
+                const match = str.match(/GMT([+-]\d{2}:?\d{2})/);
+                return match ? match[1] : '+00:00';
+              } catch (e) {
+                return '+00:00'; // Fallback to UTC
+              }
+            };
+            
+            const offset = getTzOffset(d);
             const appointmentStartTime = minutesToTime(currentMinutes);
             const appointmentEndTime = minutesToTime(currentMinutes + duration);
             
-            // Create dates without 'Z' so times are in local timezone, not UTC
-            const appointmentStart = new Date(d.toISOString().split('T')[0] + 'T' + appointmentStartTime + ':00');
-            const appointmentEnd = new Date(d.toISOString().split('T')[0] + 'T' + appointmentEndTime + ':00');
+            // Create dates using the business timezone offset
+            // format: 2025-12-29T09:00:00+05:00
+            const appointmentStart = new Date(`${d.toISOString().split('T')[0]}T${appointmentStartTime}:00${offset}`);
+            const appointmentEnd = new Date(`${d.toISOString().split('T')[0]}T${appointmentEndTime}:00${offset}`);
             
             // Count bookings that overlap with THIS specific appointment slot
             let bookingsInAppointment = 0;
@@ -394,21 +408,48 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 
     // Also check slot capacity limits (reuse businessInfo from above)
     if (businessInfo) {
+      // Determine date in business timezone to get correct day of week
+      const tz = businessInfo.timezone || 'UTC';
       const requestedDate = new Date(start);
-      const dayOfWeek = requestedDate.getDay();
+      
+      // Get day of week in business timezone
+      const localDateStr = requestedDate.toLocaleString('en-US', { timeZone: tz });
+      const localDate = new Date(localDateStr);
+      const dayOfWeek = localDate.getDay();
+
       const timeSlots = await TimeSlot.find({ 
         business: businessInfo._id, 
         dayOfWeek: dayOfWeek,
         isActive: true 
       });
 
+      // Get offset for constructing slot times
+      const getTzOffset = (date) => {
+        try {
+          const str = date.toLocaleString('en-US', { timeZone: tz, timeZoneName: 'longOffset' });
+          const match = str.match(/GMT([+-]\d{2}:?\d{2})/);
+          return match ? match[1] : '+00:00';
+        } catch (e) {
+          return '+00:00';
+        }
+      };
+      
+      const offset = getTzOffset(requestedDate);
+      
+      // Get YYYY-MM-DD in business timezone
+      // We can use the parts from toLocaleString to be safe
+      const dateParts = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(requestedDate); // YYYY-MM-DD
+      const businessDateStr = dateParts;
+
       // Check if this booking exceeds max bookings for the slot
       for (const ts of timeSlots) {
         for (const slot of ts.slots) {
           if (!slot.isActive) continue;
           
-          const slotStart = new Date(requestedDate.toISOString().split('T')[0] + 'T' + slot.startTime + ':00Z');
-          const slotEnd = new Date(requestedDate.toISOString().split('T')[0] + 'T' + slot.endTime + ':00Z');
+          // Construct slot times using business date and offset
+          // format: 2025-12-29T09:00:00+05:00
+          const slotStart = new Date(`${businessDateStr}T${slot.startTime}:00${offset}`);
+          const slotEnd = new Date(`${businessDateStr}T${slot.endTime}:00${offset}`);
           
           // Check if requested time overlaps with this slot
           if (requestedStart < slotEnd && requestedEnd > slotStart) {
@@ -922,7 +963,14 @@ async function sendInstagramMessage(
 					id: recipientId,
 				},
 				message: {
-					text: messageText,
+					// Clean Markdown characters (** or __ for bold, * or _ for italic, ` for code)
+					text: messageText
+						.replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold **text**
+						.replace(/__(.*?)__/g, '$1')     // Remove bold __text__
+						.replace(/\*(.*?)\*/g, '$1')     // Remove italic *text*
+						.replace(/_(.*?)_/g, '$1')       // Remove italic _text_
+						.replace(/`(.*?)`/g, '$1')       // Remove code `text`
+						.replace(/^\s*[-•]\s+/gm, '• ')   // Normalize list bullets
 				},
 			},
 			{
