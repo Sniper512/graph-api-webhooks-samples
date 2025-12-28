@@ -314,22 +314,26 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 
             // Create dates using the business timezone offset
             // format: 2025-12-29T09:00:00+05:00
-            const appointmentStart = new Date(`${dateStr}T${appointmentStartTime}:00${offset}`);
-            const appointmentEnd = new Date(`${dateStr}T${appointmentEndTime}:00${offset}`);
-            
+            const startDateTimeStr = `${dateStr}T${appointmentStartTime}:00${offset}`;
+            const endDateTimeStr = `${dateStr}T${appointmentEndTime}:00${offset}`;
+
+            // Create Date objects for comparison (these get converted to UTC internally)
+            const appointmentStart = new Date(startDateTimeStr);
+            const appointmentEnd = new Date(endDateTimeStr);
+
             // Count bookings that overlap with THIS specific appointment slot
             let bookingsInAppointment = 0;
             for (const booking of bookings) {
               const bStart = new Date(booking.start.dateTime || booking.start.date);
               const bEnd = new Date(booking.end.dateTime || booking.end.date);
-              
+
               // Check if booking overlaps with this specific appointment time
               if (appointmentStart < bEnd && appointmentEnd > bStart) {
                 bookingsInAppointment++;
                 console.log(`        📊 Overlap found: ${booking.summary} (${bStart.toISOString()} - ${bEnd.toISOString()})`);
               }
             }
-            
+
             const isAvailable = bookingsInAppointment < maxBookings;
 
             if (isAvailable) {
@@ -340,6 +344,9 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
                 dayName: dayName,
                 startTime: appointmentStartTime,
                 endTime: appointmentEndTime,
+                // CRITICAL: Preserve timezone format for AI to use (DO NOT convert to UTC)
+                startDateTime: startDateTimeStr,
+                endDateTime: endDateTimeStr,
                 duration: duration,
                 currentBookings: bookingsInAppointment,
                 maxBookings: maxBookings
@@ -517,19 +524,38 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 
     console.log(`✅ No conflicts found - proceeding with booking creation`);
 
+    // Prepare datetime strings for Google Calendar
+    // If they already have timezone offset (e.g., +05:00), use as-is
+    // If they have 'Z' (UTC), remove it and add timezone separately
+    const formatDateTime = (dateTimeStr) => {
+      // Check if already has timezone offset like +05:00 or -08:00
+      if (/[+-]\d{2}:\d{2}$/.test(dateTimeStr)) {
+        // Already has timezone offset, use as-is
+        return { dateTime: dateTimeStr };
+      } else if (dateTimeStr.endsWith('Z')) {
+        // Has UTC marker, remove and add timezone
+        return { dateTime: dateTimeStr.slice(0, -1), timeZone: timezone };
+      } else {
+        // No timezone info, add timezone
+        return { dateTime: dateTimeStr, timeZone: timezone };
+      }
+    };
+
     const event = {
       summary: `Booking: ${summary}`,
       description,
-      start: {
-        dateTime: start.endsWith('Z') ? start.slice(0, -1) : start,
-        timeZone: timezone
-      },
-      end: {
-        dateTime: end.endsWith('Z') ? end.slice(0, -1) : end,
-        timeZone: timezone
-      },
+      start: formatDateTime(start),
+      end: formatDateTime(end),
       attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName }] : []
     };
+
+    console.log(`📅 Creating Google Calendar event:`, {
+      summary: event.summary,
+      start: event.start,
+      end: event.end,
+      timezone: timezone
+    });
+
     const response = await calendar.events.insert({
       calendarId: 'primary',
       resource: event
@@ -696,7 +722,7 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 					`You are representing ${businessInfo}. ` +
 				"You are a helpful assistant that handles booking requests and answers questions about the business. " +
 				`IMPORTANT: All booking times are in the business's local timezone. When showing times to users, present them in a natural, user-friendly format. ` +
-				`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS use the exact 'dayName' field provided in the tool response (e.g., if the response shows dayName: \"Monday\" and date: \"2025-12-16\", present it as \"Monday, December 16, 2025\"). NEVER calculate or guess the day name yourself - always use the dayName from the response. DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. The start and end times must be in ISO 8601 format (e.g., 2025-12-29T12:00:00). 6. CRITICAL: If create_booking returns an error (especially \"time slot is already booked\" or \"maximum capacity reached\"), do NOT claim the booking was successful. Instead: a) Apologize and explain the time is no longer available, b) Immediately call get_available_booking_slots again to get fresh availability, c) Offer 3-5 alternative time slots to the user. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
+				`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS use the exact 'dayName' field provided in the tool response (e.g., if the response shows dayName: \"Monday\" and date: \"2025-12-16\", present it as \"Monday, December 16, 2025\"). NEVER calculate or guess the day name yourself - always use the dayName from the response. DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. CRITICAL: You MUST use the exact 'startDateTime' and 'endDateTime' values from the get_available_booking_slots response. For example, if the slot shows startDateTime: \"2025-12-29T08:00:00.000Z\" and endDateTime: \"2025-12-29T09:00:00.000Z\", pass these EXACT values to create_booking as 'start' and 'end' parameters. DO NOT construct your own datetime strings - always use the startDateTime and endDateTime fields provided. 6. CRITICAL: If create_booking returns an error (especially \"time slot is already booked\" or \"maximum capacity reached\"), do NOT claim the booking was successful. Instead: a) Apologize and explain the time is no longer available, b) Immediately call get_available_booking_slots again to get fresh availability, c) Offer 3-5 alternative time slots to the user. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
 
 CANCELLATION WORKFLOW - EXECUTE THIS STEP BY STEP:
 STEP 1: When user mentions cancelling a booking, FIRST call list_user_bookings tool to get their current bookings.
@@ -757,13 +783,13 @@ GENERAL QUESTIONS: For questions about the business that are not booking-related
 		    type: "function",
 		    function: {
 		      name: "create_booking",
-		      description: "Create a new booking appointment on the calendar",
+		      description: "Create a new booking appointment on the calendar. IMPORTANT: Use the exact 'startDateTime' and 'endDateTime' values from get_available_booking_slots response as 'start' and 'end' parameters.",
 		      parameters: {
 		        type: "object",
 		        properties: {
 		          summary: { type: "string", description: "Booking title or service type" },
-		          start: { type: "string", description: "Start time in ISO 8601 format (e.g., 2023-12-01T10:00:00Z)" },
-		          end: { type: "string", description: "End time in ISO 8601 format" },
+		          start: { type: "string", description: "Start time - must be the exact 'startDateTime' value from get_available_booking_slots response" },
+		          end: { type: "string", description: "End time - must be the exact 'endDateTime' value from get_available_booking_slots response" },
 		          description: { type: "string", description: "Additional details about the booking" },
 		          attendeeEmail: { type: "string", description: "Email of the person booking" },
 		          attendeeName: { type: "string", description: "Name of the person booking" }
