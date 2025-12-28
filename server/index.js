@@ -187,6 +187,10 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
     const user = await User.findById(userId);
     console.log(`👤 User Google Calendar status:`, user?.googleCalendarIntegrationStatus);
 
+    // Get business timezone early for Google Calendar queries
+    const businessTimezone = business.timezone || 'UTC';
+    console.log(`🌍 Business timezone: ${businessTimezone}`);
+
     let bookings = [];
     if (user && user.googleCalendarIntegrationStatus === 'connected') {
       console.log(`📅 Fetching existing bookings from Google Calendar...`);
@@ -198,9 +202,17 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
       );
       oauth2Client.setCredentials({ access_token: accessToken });
       const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-      const timeMin = new Date(startDate + 'T00:00:00Z').toISOString();
-      const timeMax = new Date(endDate + 'T23:59:59Z').toISOString();
-      console.log(`📅 Calendar query range: ${timeMin} to ${timeMax}`);
+
+      // Query Google Calendar using business timezone
+      // Get midnight of start date and end of end date in business timezone
+      const startDateObj = new Date(startDate + 'T00:00:00');
+      const endDateObj = new Date(endDate + 'T23:59:59');
+
+      // Format as ISO strings (Google Calendar handles timezone conversion)
+      const timeMin = startDateObj.toISOString();
+      const timeMax = endDateObj.toISOString();
+      console.log(`📅 Calendar query range: ${timeMin} to ${timeMax} (${businessTimezone})`);
+
       const response = await calendar.events.list({
         calendarId: 'primary',
         timeMin,
@@ -219,26 +231,59 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 
     console.log(`🔄 Calculating available slots...`);
     const availableSlots = [];
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    
+
     // Helper function to convert time string to minutes
     const timeToMinutes = (timeStr) => {
       const [hours, minutes] = timeStr.split(':').map(Number);
       return hours * 60 + minutes;
     };
-    
+
     // Helper function to convert minutes to time string
     const minutesToTime = (minutes) => {
       const hours = Math.floor(minutes / 60);
       const mins = minutes % 60;
       return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
     };
-    
+
+    // Helper to get timezone offset (e.g., "+05:00")
+    const getTzOffset = (date) => {
+      try {
+        const str = date.toLocaleString('en-US', { timeZone: businessTimezone, timeZoneName: 'longOffset' });
+        const match = str.match(/GMT([+-]\d{2}):?(\d{2})/);
+        if (match) {
+          return `${match[1]}:${match[2]}`;
+        }
+        return '+00:00';
+      } catch (e) {
+        console.error('Error getting timezone offset:', e);
+        return '+00:00';
+      }
+    };
+
+    // Parse start and end dates properly in business timezone
+    const start = new Date(startDate + 'T00:00:00');
+    const end = new Date(endDate + 'T23:59:59');
+
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const dayOfWeek = d.getDay();
-      const daySlots = timeSlots.filter(ts => ts.dayOfWeek === dayOfWeek);
-      console.log(`📅 Day ${d.toISOString().split('T')[0]} (${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][dayOfWeek]}): ${daySlots.length} time slots configured`);
+      // Get the date string in YYYY-MM-DD format
+      const dateStr = d.toISOString().split('T')[0];
+
+      // Get day of week in business timezone (CRITICAL FIX)
+      const dateInBusinessTz = new Date(dateStr + 'T12:00:00'); // Use noon to avoid DST edge cases
+      const dayName = dateInBusinessTz.toLocaleDateString('en-US', {
+        timeZone: businessTimezone,
+        weekday: 'long'
+      });
+      const dayOfWeek = dateInBusinessTz.toLocaleDateString('en-US', {
+        timeZone: businessTimezone,
+        weekday: 'short'
+      });
+
+      // Convert day name to number (0=Sunday, 1=Monday, etc.)
+      const dayMap = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };
+      const dayOfWeekNum = dayMap[dayOfWeek];
+      const daySlots = timeSlots.filter(ts => ts.dayOfWeek === dayOfWeekNum);
+      console.log(`📅 Day ${dateStr} (${dayName}): ${daySlots.length} time slots configured`);
 
       if (daySlots.length === 0) continue;
 
@@ -263,26 +308,14 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
           
           // Create individual appointment slots (e.g., 9:00-9:30, 9:30-10:00, etc.)
           for (let currentMinutes = startMinutes; currentMinutes + duration <= endMinutes; currentMinutes += duration) {
-            // Helper to get timezone offset (e.g., "+05:00")
-            const getTzOffset = (date) => {
-              try {
-                const tz = businessInfo.timezone || 'UTC';
-                const str = date.toLocaleString('en-US', { timeZone: tz, timeZoneName: 'longOffset' });
-                const match = str.match(/GMT([+-]\d{2}:?\d{2})/);
-                return match ? match[1] : '+00:00';
-              } catch (e) {
-                return '+00:00'; // Fallback to UTC
-              }
-            };
-            
-            const offset = getTzOffset(d);
+            const offset = getTzOffset(dateInBusinessTz);
             const appointmentStartTime = minutesToTime(currentMinutes);
             const appointmentEndTime = minutesToTime(currentMinutes + duration);
-            
+
             // Create dates using the business timezone offset
             // format: 2025-12-29T09:00:00+05:00
-            const appointmentStart = new Date(`${d.toISOString().split('T')[0]}T${appointmentStartTime}:00${offset}`);
-            const appointmentEnd = new Date(`${d.toISOString().split('T')[0]}T${appointmentEndTime}:00${offset}`);
+            const appointmentStart = new Date(`${dateStr}T${appointmentStartTime}:00${offset}`);
+            const appointmentEnd = new Date(`${dateStr}T${appointmentEndTime}:00${offset}`);
             
             // Count bookings that overlap with THIS specific appointment slot
             let bookingsInAppointment = 0;
@@ -298,13 +331,12 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
             }
             
             const isAvailable = bookingsInAppointment < maxBookings;
-            
+
             if (isAvailable) {
-              const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
               console.log(`        ✅ ${appointmentStartTime}-${appointmentEndTime} available (${bookingsInAppointment}/${maxBookings})`);
               availableSlots.push({
-                date: d.toISOString().split('T')[0],
-                dayOfWeek: dayOfWeek,
+                date: dateStr,
+                dayOfWeek: dayOfWeekNum,
                 dayName: dayName,
                 startTime: appointmentStartTime,
                 endTime: appointmentEndTime,
@@ -489,11 +521,11 @@ async function createBooking(userId, conversationId, senderId, platform, summary
       summary: `Booking: ${summary}`,
       description,
       start: {
-        dateTime: start,
+        dateTime: start.endsWith('Z') ? start.slice(0, -1) : start,
         timeZone: timezone
       },
       end: {
-        dateTime: end,
+        dateTime: end.endsWith('Z') ? end.slice(0, -1) : end,
         timeZone: timezone
       },
       attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName }] : []
