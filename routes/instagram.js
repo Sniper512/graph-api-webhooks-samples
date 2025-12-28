@@ -268,5 +268,57 @@ router.post('/initiate-connection', auth, async (req, res) => {
   }
 });
 
+// Pause Instagram webhook for user
+router.post('/pause-webhook', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    user.instagramWebhookPaused = true;
+    await user.save();
+
+    console.log(`⏸️  Instagram webhook paused for user ${user._id}`);
+
+    res.json({
+      message: 'Instagram webhook paused successfully.',
+      instagramWebhookPaused: true
+    });
+  } catch (error) {
+    console.error('Pause Instagram webhook error:', error);
+    res.status(500).json({
+      message: 'Failed to pause Instagram webhook.'
+    });
+  }
+});
+
+// Resume Instagram webhook for user
+router.post('/resume-webhook', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    user.instagramWebhookPaused = false;
+    await user.save();
+
+    console.log(`▶️  Instagram webhook resumed for user ${user._id}`);
+
+    res.json({
+      message: 'Instagram webhook resumed successfully.',
+      instagramWebhookPaused: false
+    });
+  } catch (error) {
+    console.error('Resume Instagram webhook error:', error);
+    res.status(500).json({
+      message: 'Failed to resume Instagram webhook.'
+    });
+  }
+});
+
 
 module.exports = router;

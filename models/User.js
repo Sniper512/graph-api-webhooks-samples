@@ -66,6 +66,10 @@ const userSchema = new mongoose.Schema({
     enum: ['not_connected', 'pending', 'connected'],
     default: 'not_connected'
   },
+  instagramWebhookPaused: {
+    type: Boolean,
+    default: false
+  },
   googleCalendarAccessToken: {
     type: String,
     required: false,
@@ -84,6 +88,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ['not_connected', 'pending', 'connected'],
     default: 'not_connected'
+  },
+  googleCalendarEmail: {
+    type: String,
+    required: false,
+    trim: true
   },
   business: {
     type: mongoose.Schema.Types.ObjectId,

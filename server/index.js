@@ -1299,6 +1299,12 @@ app.post("/instagram", async function (req, res) {
 								instagramAccountId: recipientId,
 							});
 
+							// Check if Instagram webhook is paused for this user
+							if (user && user.instagramWebhookPaused) {
+								console.log(`⏸️  Instagram webhook is paused for user ${user._id}. Message not processed.`);
+								return; // Skip processing
+							}
+
 						if (user && user.instagramAccessToken) {
 							// Get AI response with conversation context (pass 'instagram' as platform)
 							const aiResponse = await getOpenAIResponse(
