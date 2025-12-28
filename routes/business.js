@@ -15,7 +15,8 @@ router.post('/', auth, async (req, res) => {
       phoneNumber,
       website,
       businessDescription,
-      address
+      address,
+      timezone
     } = req.body;
 
     // Validation
@@ -50,7 +51,8 @@ router.post('/', auth, async (req, res) => {
       phoneNumber: phoneNumber?.trim(),
       website: website?.trim(),
       businessDescription: businessDescription?.trim(),
-      address: address?.trim()
+      address: address?.trim(),
+      timezone: timezone?.trim() || 'UTC'
     });
 
     await business.save();
@@ -69,6 +71,7 @@ router.post('/', auth, async (req, res) => {
         website: business.website,
         businessDescription: business.businessDescription,
         address: business.address,
+        timezone: business.timezone,
         createdAt: business.createdAt,
         updatedAt: business.updatedAt
       }
@@ -103,6 +106,7 @@ router.get('/', auth, async (req, res) => {
         website: business.website,
         businessDescription: business.businessDescription,
         address: business.address,
+        timezone: business.timezone,
         createdAt: business.createdAt,
         updatedAt: business.updatedAt
       }
@@ -126,7 +130,8 @@ router.put('/', auth, async (req, res) => {
       phoneNumber,
       website,
       businessDescription,
-      address
+      address,
+      timezone
     } = req.body;
 
     // Validation
@@ -165,6 +170,7 @@ router.put('/', auth, async (req, res) => {
     business.website = website?.trim() || '';
     business.businessDescription = businessDescription?.trim() || '';
     business.address = address?.trim() || '';
+    business.timezone = timezone?.trim() || 'UTC';
 
     await business.save();
 
@@ -179,6 +185,7 @@ router.put('/', auth, async (req, res) => {
         website: business.website,
         businessDescription: business.businessDescription,
         address: business.address,
+        timezone: business.timezone,
         createdAt: business.createdAt,
         updatedAt: business.updatedAt
       }
