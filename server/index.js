@@ -116,6 +116,14 @@ var token = process.env.TOKEN || "token";
 var received_updates = [];
 
 // Tool functions for booking
+const getGoogleCalendarRedirectUri = () => {
+  // Check if we're in production
+  if (process.env.NODE_ENV === 'production' || process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD) {
+    return process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+  }
+  return process.env.GOOGLE_CALENDAR_REDIRECT_URI_LOCAL || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+};
+
 async function refreshAccessTokenIfNeeded(user) {
   const now = new Date();
   if (user.googleCalendarTokenExpiry && user.googleCalendarTokenExpiry <= now) {
@@ -123,7 +131,7 @@ async function refreshAccessTokenIfNeeded(user) {
       const oauth2Client = new google.auth.OAuth2(
         process.env.GOOGLE_CALENDAR_CLIENT_ID,
         process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-        process.env.GOOGLE_CALENDAR_REDIRECT_URI
+        getGoogleCalendarRedirectUri()
       );
       oauth2Client.setCredentials({ refresh_token: user.googleCalendarRefreshToken });
       const { credentials } = await oauth2Client.refreshAccessToken();

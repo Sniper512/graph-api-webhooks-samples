@@ -5,11 +5,19 @@ const User = require('../models/User');
 const { google } = require('googleapis');
 const auth = require('../middleware/auth');
 
-// Initialize Google OAuth2 client
+// Initialize Google OAuth2 client with dynamic redirect URI
+const getRedirectUri = () => {
+  // Check if we're in production (you can also check NODE_ENV or a custom env var)
+  if (process.env.NODE_ENV === 'production' || process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD) {
+    return process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+  }
+  return process.env.GOOGLE_CALENDAR_REDIRECT_URI_LOCAL || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+};
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CALENDAR_CLIENT_ID,
   process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-  process.env.GOOGLE_CALENDAR_REDIRECT_URI
+  getRedirectUri()
 );
 
 // Helper function to refresh access token if expired
