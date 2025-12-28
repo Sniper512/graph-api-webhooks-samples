@@ -189,7 +189,7 @@ router.post('/extract', auth, async (req, res) => {
     }
 
     // Send request to FAQ extraction service with userid
-    const faqScraperUrl = process.env.FAQ_SCRAPER_URL || 'http://localhost:5001';
+    const faqScraperUrl = process.env.FAQ_SCRAPER_URL || process.env.FAQ_SCRAPER_URL_LOCAL || 'http://localhost:5001';
     const response = await axios.post(`${faqScraperUrl}/extract_faqs`, {
       url: business.website,
       userid: req.user.userId,

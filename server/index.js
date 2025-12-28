@@ -51,8 +51,8 @@ app.listen(app.get("port"));
 
 // CORS configuration - allow multiple origins
 const allowedOrigins = [
-	'http://localhost:5173',
-	'http://localhost:3000',
+	process.env.FRONTEND_URL_LOCAL || 'http://localhost:5173',
+	process.env.FRONTEND_URL_DEV || 'http://localhost:3000',
 	'https://meta-user-dashboard.vercel.app',
 	'https://meta-app-admin-dashboard.vercel.app',
 	process.env.FRONTEND_URL,
