@@ -279,10 +279,14 @@ async function createBooking(userId, conversationId, senderId, platform, summary
   try {
     const User = require("../models/User");
     const Booking = require("../models/Booking");
+    const TimeSlot = require("../models/TimeSlot");
+    const Business = require("../models/Business");
+    
     const user = await User.findById(userId);
     if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
       return { error: "Google Calendar not connected" };
     }
+    
     const accessToken = await refreshAccessTokenIfNeeded(user);
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CALENDAR_CLIENT_ID,
@@ -297,6 +301,89 @@ async function createBooking(userId, conversationId, senderId, platform, summary
       calendarId: 'primary'
     });
     const timezone = calendarInfo.data.timeZone || 'UTC';
+
+    // CRITICAL: Check for conflicts before creating booking
+    console.log(`🔍 Checking for conflicts: ${start} to ${end}`);
+    
+    const requestedStart = new Date(start);
+    const requestedEnd = new Date(end);
+    
+    // Get existing bookings from Google Calendar for this time range
+    const existingEvents = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: requestedStart.toISOString(),
+      timeMax: requestedEnd.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime'
+    });
+
+    // Check if any existing event conflicts with the requested time
+    const conflicts = existingEvents.data.items.filter(event => {
+      const eventStart = new Date(event.start.dateTime || event.start.date);
+      const eventEnd = new Date(event.end.dateTime || event.end.date);
+      
+      // Check for overlap: (StartA < EndB) and (EndA > StartB)
+      const hasOverlap = requestedStart < eventEnd && requestedEnd > eventStart;
+      
+      if (hasOverlap) {
+        console.log(`⚠️  Conflict detected with: ${event.summary} (${eventStart.toISOString()} - ${eventEnd.toISOString()})`);
+      }
+      
+      return hasOverlap;
+    });
+
+    if (conflicts.length > 0) {
+      console.log(`❌ Cannot create booking - ${conflicts.length} conflict(s) found`);
+      return { 
+        error: "This time slot is already booked. Please choose a different time.",
+        conflicts: conflicts.map(c => ({
+          summary: c.summary,
+          start: c.start.dateTime || c.start.date,
+          end: c.end.dateTime || c.end.date
+        }))
+      };
+    }
+
+    // Also check slot capacity limits
+    const business = await Business.findOne({ user: userId });
+    if (business) {
+      const requestedDate = new Date(start);
+      const dayOfWeek = requestedDate.getDay();
+      const timeSlots = await TimeSlot.find({ 
+        business: business._id, 
+        dayOfWeek: dayOfWeek,
+        isActive: true 
+      });
+
+      // Check if this booking exceeds max bookings for the slot
+      for (const ts of timeSlots) {
+        for (const slot of ts.slots) {
+          if (!slot.isActive) continue;
+          
+          const slotStart = new Date(requestedDate.toISOString().split('T')[0] + 'T' + slot.startTime + ':00Z');
+          const slotEnd = new Date(requestedDate.toISOString().split('T')[0] + 'T' + slot.endTime + ':00Z');
+          
+          // Check if requested time falls within this slot
+          if (requestedStart >= slotStart && requestedEnd <= slotEnd) {
+            // Count existing bookings in this slot
+            const slotBookings = existingEvents.data.items.filter(event => {
+              const eStart = new Date(event.start.dateTime || event.start.date);
+              const eEnd = new Date(event.end.dateTime || event.end.date);
+              return eStart >= slotStart && eEnd <= slotEnd;
+            }).length;
+
+            if (slotBookings >= slot.maxBookings) {
+              console.log(`❌ Slot capacity reached: ${slotBookings}/${slot.maxBookings} bookings`);
+              return { 
+                error: `This time slot has reached its maximum capacity (${slot.maxBookings} bookings). Please choose a different time.`
+              };
+            }
+          }
+        }
+      }
+    }
+
+    console.log(`✅ No conflicts found - proceeding with booking creation`);
 
     const event = {
       summary: `Booking: ${summary}`,
@@ -475,7 +562,7 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 				content:
 					`You are representing ${businessInfo}. ` +
 					"You are a helpful assistant that handles booking requests and answers questions about the business. " +
-					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS use the exact 'dayName' field provided in the tool response (e.g., if the response shows dayName: "Monday" and date: "2025-12-16", present it as "Monday, December 16, 2025"). NEVER calculate or guess the day name yourself - always use the dayName from the response. DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
+					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS use the exact 'dayName' field provided in the tool response (e.g., if the response shows dayName: "Monday" and date: "2025-12-16", present it as "Monday, December 16, 2025"). NEVER calculate or guess the day name yourself - always use the dayName from the response. DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. 6. CRITICAL: If create_booking returns an error (especially "time slot is already booked" or "maximum capacity reached"), do NOT claim the booking was successful. Instead: a) Apologize and explain the time is no longer available, b) Immediately call get_available_booking_slots again to get fresh availability, c) Offer 3-5 alternative time slots to the user. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
 
 CANCELLATION WORKFLOW - EXECUTE THIS STEP BY STEP:
 STEP 1: When user mentions cancelling a booking, FIRST call list_user_bookings tool to get their current bookings.
