@@ -41,6 +41,11 @@ const businessSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  timezone: {
+    type: String,
+    default: 'UTC',
+    trim: true
+  },
   // FAQ extraction status tracking
   faqExtractionStatus: {
     type: String,

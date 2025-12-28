@@ -216,10 +216,25 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
       console.log(`📅 Existing bookings found: ${bookings.length}`);
     }
 
+
     console.log(`🔄 Calculating available slots...`);
     const availableSlots = [];
     const start = new Date(startDate);
     const end = new Date(endDate);
+    
+    // Helper function to convert time string to minutes
+    const timeToMinutes = (timeStr) => {
+      const [hours, minutes] = timeStr.split(':').map(Number);
+      return hours * 60 + minutes;
+    };
+    
+    // Helper function to convert minutes to time string
+    const minutesToTime = (minutes) => {
+      const hours = Math.floor(minutes / 60);
+      const mins = minutes % 60;
+      return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    };
+    
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const dayOfWeek = d.getDay();
       const daySlots = timeSlots.filter(ts => ts.dayOfWeek === dayOfWeek);
@@ -228,50 +243,63 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
       if (daySlots.length === 0) continue;
 
       for (const ts of daySlots) {
-        console.log(`  ⏰ TimeSlot ID ${ts._id}: ${ts.slots.length} slots`);
+        console.log(`  ⏰ TimeSlot ID ${ts._id}: ${ts.slots.length} slot configurations`);
+        
         for (const slot of ts.slots) {
           if (!slot.isActive) {
             console.log(`    ❌ Slot ${slot.startTime}-${slot.endTime} is inactive`);
             continue;
           }
-          console.log(`    ✅ Slot ${slot.startTime}-${slot.endTime} (${slot.duration}min) is active`);
-
-          const slotStart = new Date(d.toISOString().split('T')[0] + 'T' + slot.startTime + ':00Z');
-          const slotEnd = new Date(d.toISOString().split('T')[0] + 'T' + slot.endTime + ':00Z');
-
-          // Count how many bookings already exist in this time slot
-          let bookingsInSlot = 0;
-          for (const booking of bookings) {
-            const bStart = new Date(booking.start.dateTime || booking.start.date);
-            const bEnd = new Date(booking.end.dateTime || booking.end.date);
-            
-            // Check if booking overlaps with this slot
-            if (slotStart < bEnd && slotEnd > bStart) {
-              bookingsInSlot++;
-              console.log(`      📊 Booking ${bookingsInSlot}: ${booking.summary} (${bStart.toISOString()} - ${bEnd.toISOString()})`);
-            }
-          }
-
-          // Check if slot has capacity
-          const maxBookings = slot.maxBookings || 1;
-          const isAvailable = bookingsInSlot < maxBookings;
           
-          if (isAvailable) {
-            const dayOfWeek = d.getDay();
-            const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
-            console.log(`      ✅ Available: ${d.toISOString().split('T')[0]} (${dayName}) ${slot.startTime}-${slot.endTime} (${bookingsInSlot}/${maxBookings} bookings)`);
-            availableSlots.push({
-              date: d.toISOString().split('T')[0],
-              dayOfWeek: dayOfWeek,
-              dayName: dayName,
-              startTime: slot.startTime,
-              endTime: slot.endTime,
-              duration: slot.duration,
-              currentBookings: bookingsInSlot,
-              maxBookings: maxBookings
-            });
-          } else {
-            console.log(`      ❌ Not available: ${d.toISOString().split('T')[0]} ${slot.startTime}-${slot.endTime} (${bookingsInSlot}/${maxBookings} bookings - FULL)`);
+          console.log(`    ✅ Slot ${slot.startTime}-${slot.endTime} (${slot.duration}min, max ${slot.maxBookings} bookings) is active`);
+          
+          // Generate individual appointment slots based on duration
+          const startMinutes = timeToMinutes(slot.startTime);
+          const endMinutes = timeToMinutes(slot.endTime);
+          const duration = slot.duration;
+          const maxBookings = slot.maxBookings || 1;
+          
+          console.log(`      🔄 Generating individual ${duration}-minute appointment slots...`);
+          
+          // Create individual appointment slots (e.g., 9:00-9:30, 9:30-10:00, etc.)
+          for (let currentMinutes = startMinutes; currentMinutes + duration <= endMinutes; currentMinutes += duration) {
+            const appointmentStartTime = minutesToTime(currentMinutes);
+            const appointmentEndTime = minutesToTime(currentMinutes + duration);
+            
+            const appointmentStart = new Date(d.toISOString().split('T')[0] + 'T' + appointmentStartTime + ':00Z');
+            const appointmentEnd = new Date(d.toISOString().split('T')[0] + 'T' + appointmentEndTime + ':00Z');
+            
+            // Count bookings that overlap with THIS specific appointment slot
+            let bookingsInAppointment = 0;
+            for (const booking of bookings) {
+              const bStart = new Date(booking.start.dateTime || booking.start.date);
+              const bEnd = new Date(booking.end.dateTime || booking.end.date);
+              
+              // Check if booking overlaps with this specific appointment time
+              if (appointmentStart < bEnd && appointmentEnd > bStart) {
+                bookingsInAppointment++;
+                console.log(`        📊 Overlap found: ${booking.summary} (${bStart.toISOString()} - ${bEnd.toISOString()})`);
+              }
+            }
+            
+            const isAvailable = bookingsInAppointment < maxBookings;
+            
+            if (isAvailable) {
+              const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+              console.log(`        ✅ ${appointmentStartTime}-${appointmentEndTime} available (${bookingsInAppointment}/${maxBookings})`);
+              availableSlots.push({
+                date: d.toISOString().split('T')[0],
+                dayOfWeek: dayOfWeek,
+                dayName: dayName,
+                startTime: appointmentStartTime,
+                endTime: appointmentEndTime,
+                duration: duration,
+                currentBookings: bookingsInAppointment,
+                maxBookings: maxBookings
+              });
+            } else {
+              console.log(`        ❌ ${appointmentStartTime}-${appointmentEndTime} FULL (${bookingsInAppointment}/${maxBookings})`);
+            }
           }
         }
       }
@@ -304,11 +332,22 @@ async function createBooking(userId, conversationId, senderId, platform, summary
     oauth2Client.setCredentials({ access_token: accessToken });
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-    // Get user's timezone from Google Calendar
-    const calendarInfo = await calendar.calendars.get({
-      calendarId: 'primary'
-    });
-    const timezone = calendarInfo.data.timeZone || 'UTC';
+    // Get business timezone (or use Google Calendar timezone as fallback)
+    const businessInfo = await Business.findOne({ user: userId });
+    let timezone = 'UTC'; // Default fallback
+    
+    if (businessInfo && businessInfo.timezone) {
+      timezone = businessInfo.timezone;
+      console.log(`📍 Using business timezone: ${timezone}`);
+    } else {
+      // Fallback to Google Calendar timezone
+      const calendarInfo = await calendar.calendars.get({
+        calendarId: 'primary'
+      });
+      timezone = calendarInfo.data.timeZone || 'UTC';
+      console.log(`📍 Using Google Calendar timezone: ${timezone}`);
+    }
+
 
     // CRITICAL: Check for conflicts before creating booking
     console.log(`🔍 Checking for conflicts: ${start} to ${end}`);
@@ -352,13 +391,12 @@ async function createBooking(userId, conversationId, senderId, platform, summary
       };
     }
 
-    // Also check slot capacity limits
-    const business = await Business.findOne({ user: userId });
-    if (business) {
+    // Also check slot capacity limits (reuse businessInfo from above)
+    if (businessInfo) {
       const requestedDate = new Date(start);
       const dayOfWeek = requestedDate.getDay();
       const timeSlots = await TimeSlot.find({ 
-        business: business._id, 
+        business: businessInfo._id, 
         dayOfWeek: dayOfWeek,
         isActive: true 
       });
@@ -553,7 +591,8 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 					(business.businessDescription
 						? `. ${business.businessDescription}`
 						: "") +
-					(business.address ? `. We're located at: ${business.address}` : "");
+					(business.address ? `. We're located at: ${business.address}` : "") +
+					(business.timezone ? `. Our timezone is ${business.timezone}` : "");
 			} else {
 				businessInfo = "our business";
 			}
@@ -581,8 +620,9 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 				role: "system",
 				content:
 					`You are representing ${businessInfo}. ` +
-					"You are a helpful assistant that handles booking requests and answers questions about the business. " +
-					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS use the exact 'dayName' field provided in the tool response (e.g., if the response shows dayName: "Monday" and date: "2025-12-16", present it as "Monday, December 16, 2025"). NEVER calculate or guess the day name yourself - always use the dayName from the response. DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. 6. CRITICAL: If create_booking returns an error (especially "time slot is already booked" or "maximum capacity reached"), do NOT claim the booking was successful. Instead: a) Apologize and explain the time is no longer available, b) Immediately call get_available_booking_slots again to get fresh availability, c) Offer 3-5 alternative time slots to the user. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
+				"You are a helpful assistant that handles booking requests and answers questions about the business. " +
+				`IMPORTANT: All booking times are in the business's local timezone. When showing times to users, present them in a natural, user-friendly format. ` +
+				`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. Present 3-5 available options to the user in a clear, easy-to-read format. When presenting dates, ALWAYS use the exact 'dayName' field provided in the tool response (e.g., if the response shows dayName: \"Monday\" and date: \"2025-12-16\", present it as \"Monday, December 16, 2025\"). NEVER calculate or guess the day name yourself - always use the dayName from the response. DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user: - Full name (required) - Contact number/email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool to create the booking. The start and end times must be in ISO 8601 format (e.g., 2025-12-29T12:00:00). 6. CRITICAL: If create_booking returns an error (especially \"time slot is already booked\" or \"maximum capacity reached\"), do NOT claim the booking was successful. Instead: a) Apologize and explain the time is no longer available, b) Immediately call get_available_booking_slots again to get fresh availability, c) Offer 3-5 alternative time slots to the user. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
 
 CANCELLATION WORKFLOW - EXECUTE THIS STEP BY STEP:
 STEP 1: When user mentions cancelling a booking, FIRST call list_user_bookings tool to get their current bookings.
