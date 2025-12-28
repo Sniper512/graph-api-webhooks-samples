@@ -239,31 +239,39 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
           const slotStart = new Date(d.toISOString().split('T')[0] + 'T' + slot.startTime + ':00Z');
           const slotEnd = new Date(d.toISOString().split('T')[0] + 'T' + slot.endTime + ':00Z');
 
-          let isAvailable = true;
+          // Count how many bookings already exist in this time slot
+          let bookingsInSlot = 0;
           for (const booking of bookings) {
             const bStart = new Date(booking.start.dateTime || booking.start.date);
             const bEnd = new Date(booking.end.dateTime || booking.end.date);
+            
+            // Check if booking overlaps with this slot
             if (slotStart < bEnd && slotEnd > bStart) {
-              console.log(`      ❌ Conflicts with booking: ${booking.summary} (${bStart.toISOString()} - ${bEnd.toISOString()})`);
-              isAvailable = false;
-              break;
+              bookingsInSlot++;
+              console.log(`      📊 Booking ${bookingsInSlot}: ${booking.summary} (${bStart.toISOString()} - ${bEnd.toISOString()})`);
             }
           }
 
+          // Check if slot has capacity
+          const maxBookings = slot.maxBookings || 1;
+          const isAvailable = bookingsInSlot < maxBookings;
+          
           if (isAvailable) {
             const dayOfWeek = d.getDay();
             const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
-            console.log(`      ✅ Available: ${d.toISOString().split('T')[0]} (${dayName}) ${slot.startTime}-${slot.endTime}`);
+            console.log(`      ✅ Available: ${d.toISOString().split('T')[0]} (${dayName}) ${slot.startTime}-${slot.endTime} (${bookingsInSlot}/${maxBookings} bookings)`);
             availableSlots.push({
               date: d.toISOString().split('T')[0],
               dayOfWeek: dayOfWeek,
               dayName: dayName,
               startTime: slot.startTime,
               endTime: slot.endTime,
-              duration: slot.duration
+              duration: slot.duration,
+              currentBookings: bookingsInSlot,
+              maxBookings: maxBookings
             });
           } else {
-            console.log(`      ❌ Not available: ${d.toISOString().split('T')[0]} ${slot.startTime}-${slot.endTime}`);
+            console.log(`      ❌ Not available: ${d.toISOString().split('T')[0]} ${slot.startTime}-${slot.endTime} (${bookingsInSlot}/${maxBookings} bookings - FULL)`);
           }
         }
       }
@@ -363,20 +371,32 @@ async function createBooking(userId, conversationId, senderId, platform, summary
           const slotStart = new Date(requestedDate.toISOString().split('T')[0] + 'T' + slot.startTime + ':00Z');
           const slotEnd = new Date(requestedDate.toISOString().split('T')[0] + 'T' + slot.endTime + ':00Z');
           
-          // Check if requested time falls within this slot
-          if (requestedStart >= slotStart && requestedEnd <= slotEnd) {
-            // Count existing bookings in this slot
-            const slotBookings = existingEvents.data.items.filter(event => {
+          // Check if requested time overlaps with this slot
+          if (requestedStart < slotEnd && requestedEnd > slotStart) {
+            console.log(`🔍 Checking capacity for slot ${slot.startTime}-${slot.endTime} (max: ${slot.maxBookings})`);
+            
+            // Count existing bookings that OVERLAP with this slot
+            const overlappingBookings = existingEvents.data.items.filter(event => {
               const eStart = new Date(event.start.dateTime || event.start.date);
               const eEnd = new Date(event.end.dateTime || event.end.date);
-              return eStart >= slotStart && eEnd <= slotEnd;
-            }).length;
+              
+              // Check if the existing event overlaps with this slot
+              return eStart < slotEnd && eEnd > slotStart;
+            });
+            
+            const bookingCount = overlappingBookings.length;
+            console.log(`📊 Found ${bookingCount} overlapping bookings in this slot`);
+            overlappingBookings.forEach((b, idx) => {
+              console.log(`  ${idx + 1}. ${b.summary} (${new Date(b.start.dateTime || b.start.date).toISOString()} - ${new Date(b.end.dateTime || b.end.date).toISOString()})`);
+            });
 
-            if (slotBookings >= slot.maxBookings) {
-              console.log(`❌ Slot capacity reached: ${slotBookings}/${slot.maxBookings} bookings`);
+            if (bookingCount >= slot.maxBookings) {
+              console.log(`❌ Slot capacity reached: ${bookingCount}/${slot.maxBookings} bookings`);
               return { 
                 error: `This time slot has reached its maximum capacity (${slot.maxBookings} bookings). Please choose a different time.`
               };
+            } else {
+              console.log(`✅ Slot has capacity: ${bookingCount}/${slot.maxBookings} bookings`);
             }
           }
         }
