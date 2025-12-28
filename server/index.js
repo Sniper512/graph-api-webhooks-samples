@@ -359,6 +359,18 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
       }
     }
     console.log(`✅ Available slots calculated: ${availableSlots.length}`);
+
+    // Log first few slots with full details for debugging
+    if (availableSlots.length > 0) {
+      console.log(`\n📊 Sample slot details (first 3):`);
+      availableSlots.slice(0, 3).forEach((slot, idx) => {
+        console.log(`  ${idx + 1}. ${slot.dayName} ${slot.date} ${slot.startTime}-${slot.endTime}`);
+        console.log(`     startDateTime: ${slot.startDateTime}`);
+        console.log(`     endDateTime: ${slot.endDateTime}`);
+      });
+      console.log();
+    }
+
     return { availableSlots };
   } catch (error) {
     console.error('❌ Error getting available slots:', error);
@@ -367,11 +379,19 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 }
 async function createBooking(userId, conversationId, senderId, platform, summary, start, end, description, attendeeEmail, attendeeName) {
   try {
+    console.log(`\n🎯 ========== CREATE BOOKING CALLED ==========`);
+    console.log(`📋 Summary: ${summary}`);
+    console.log(`⏰ Start: ${start}`);
+    console.log(`⏰ End: ${end}`);
+    console.log(`📝 Description: ${description}`);
+    console.log(`👤 Attendee: ${attendeeName} (${attendeeEmail})`);
+    console.log(`🎯 ============================================\n`);
+
     const User = require("../models/User");
     const Booking = require("../models/Booking");
     const TimeSlot = require("../models/TimeSlot");
     const Business = require("../models/Business");
-    
+
     const user = await User.findById(userId);
     if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
       return { error: "Google Calendar not connected" };
@@ -405,10 +425,14 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 
     // CRITICAL: Check for conflicts before creating booking
     console.log(`🔍 Checking for conflicts: ${start} to ${end}`);
-    
+
     const requestedStart = new Date(start);
     const requestedEnd = new Date(end);
-    
+
+    console.log(`🔍 Requested time range (parsed):`);
+    console.log(`   Start: ${requestedStart.toISOString()} (${requestedStart.toString()})`);
+    console.log(`   End: ${requestedEnd.toISOString()} (${requestedEnd.toString()})`);
+
     // Get existing bookings from Google Calendar for this time range
     const existingEvents = await calendar.events.list({
       calendarId: 'primary',
@@ -418,18 +442,28 @@ async function createBooking(userId, conversationId, senderId, platform, summary
       orderBy: 'startTime'
     });
 
+    console.log(`📅 Found ${existingEvents.data.items.length} existing events in this time range`);
+    existingEvents.data.items.forEach((event, idx) => {
+      const eventStart = new Date(event.start.dateTime || event.start.date);
+      const eventEnd = new Date(event.end.dateTime || event.end.date);
+      console.log(`   ${idx + 1}. "${event.summary}": ${eventStart.toISOString()} - ${eventEnd.toISOString()}`);
+    });
+
     // Check if any existing event conflicts with the requested time
     const conflicts = existingEvents.data.items.filter(event => {
       const eventStart = new Date(event.start.dateTime || event.start.date);
       const eventEnd = new Date(event.end.dateTime || event.end.date);
-      
+
       // Check for overlap: (StartA < EndB) and (EndA > StartB)
       const hasOverlap = requestedStart < eventEnd && requestedEnd > eventStart;
-      
+
       if (hasOverlap) {
-        console.log(`⚠️  Conflict detected with: ${event.summary} (${eventStart.toISOString()} - ${eventEnd.toISOString()})`);
+        console.log(`⚠️  CONFLICT: "${event.summary}"`);
+        console.log(`     Event: ${eventStart.toISOString()} - ${eventEnd.toISOString()}`);
+        console.log(`     Requested: ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`);
+        console.log(`     Overlap check: ${requestedStart.toISOString()} < ${eventEnd.toISOString()} && ${requestedEnd.toISOString()} > ${eventStart.toISOString()}`);
       }
-      
+
       return hasOverlap;
     });
 
