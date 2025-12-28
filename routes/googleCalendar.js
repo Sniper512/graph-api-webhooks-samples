@@ -14,6 +14,21 @@ const getRedirectUri = () => {
   return process.env.GOOGLE_CALENDAR_REDIRECT_URI_LOCAL || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
 };
 
+// Helper function to get frontend redirect URL
+const getFrontendRedirectUrl = (path = '/bookings') => {
+  const params = 'googleCalendar=connected';
+  
+  // Check if we're in production
+  if (process.env.NODE_ENV === 'production' || process.env.FRONTEND_URL_PROD) {
+    const baseUrl = process.env.FRONTEND_URL_PROD || process.env.FRONTEND_URL;
+    return `${baseUrl}${path}?${params}`;
+  }
+  
+  // Use local development URL
+  const localUrl = process.env.FRONTEND_URL_LOCAL || 'http://localhost:5173';
+  return `${localUrl}${path}?${params}`;
+};
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CALENDAR_CLIENT_ID,
   process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
@@ -112,7 +127,7 @@ router.get('/auth/google/callback', async (req, res) => {
     
     // Redirect the user to the bookings page
     console.log('🔄 Google OAuth Callback: Redirecting to bookings page...');
-    res.redirect('http://localhost:5173/bookings?googleCalendar=connected');
+    res.redirect(getFrontendRedirectUrl('/bookings'));
   } catch (error) {
     console.error('❌ Google OAuth Callback Error:', error);
     res.status(500).send('Failed to authenticate with Google Calendar');
