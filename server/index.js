@@ -727,7 +727,7 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 					(business.businessDescription
 						? `Other business description is: ${business.businessDescription}`
 						: "") +
-					(business.address ? `. business Location or address: ${business.address}` : "") +
+					(business.address ? `. business/office Location/address: ${business.address}` : "") +
 					(business.timezone ? `. Our timezone is ${business.timezone}` : "");
 			} else {
 				businessInfo = "our business";
