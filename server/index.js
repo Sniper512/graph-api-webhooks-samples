@@ -1465,4 +1465,13 @@ app.post("/whatsapp", async function (req, res) {
 	}
 });
 
-app.listen();
+// For local development
+if (process.env.NODE_ENV !== 'production') {
+	const PORT = app.get("port");
+	app.listen(PORT, function () {
+		console.log(`Node app is running on port ${PORT}`);
+	});
+}
+
+// Export for Vercel serverless
+module.exports = app;
