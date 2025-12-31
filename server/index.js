@@ -723,11 +723,11 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 					`A ${business.businessCategory} company. ` +
 					`email address is ${business.email}` +
 					(business.phoneNumber ? ` & phone number or contact number is ${business.phoneNumber}` : "") +
-					(business.website ? `. & website is: ${business.website}` : "") +
+					(business.website ? `. & website or social media is: ${business.website}` : "") +
 					(business.businessDescription
-						? `Other business description is: ${business.businessDescription}`
+						? `More information about business is: ${business.businessDescription}`
 						: "") +
-					(business.address ? `. business/office Location/address: ${business.address}` : "") +
+					(business.address ? `. business office Location or address: ${business.address}` : "") +
 					(business.timezone ? `. Our timezone is ${business.timezone}` : "");
 			} else {
 				businessInfo = "our business";
