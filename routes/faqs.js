@@ -1,16 +1,19 @@
 const express = require('express');
 const FAQ = require('../models/FAQ');
+const UnansweredQuestion = require('../models/UnansweredQuestion');
 const Business = require('../models/Business');
 const auth = require('../middleware/auth');
 const axios = require('axios');
+const { findSimilarQuestions } = require('../utils/similarity');
+const { ensureDBConnection } = require('../utils/db');
 
 const router = express.Router();
 
 // Get FAQ extraction status for authenticated user
-router.get('/extraction-status', auth, async (req, res) => {
+router.get('/extraction-status', ensureDBConnection, auth, async (req, res) => {
   console.log('🔍 FAQ EXTRACTION STATUS CHECK ENDPOINT HIT!');
   console.log('User ID:', req.user.userId);
-  
+
   try {
     const business = await Business.findOne({ user: req.user.userId });
 
@@ -27,7 +30,7 @@ router.get('/extraction-status', auth, async (req, res) => {
     const taskId = business.faqExtractionTaskId;
 
     console.log(`✅ Retrieved status "${status}" for user ${req.user.userId}`);
-    
+
     res.json({
       status: status,
       updatedAt: updatedAt,
@@ -46,7 +49,7 @@ router.get('/extraction-status', auth, async (req, res) => {
 });
 
 // Get all FAQs for the authenticated user
-router.get('/', auth, async (req, res) => {
+router.get('/', ensureDBConnection, auth, async (req, res) => {
   try {
     const faqs = await FAQ.find({ user: req.user.userId }).sort({ createdAt: -1 });
 
@@ -63,7 +66,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // Get a specific FAQ
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', ensureDBConnection, auth, async (req, res) => {
   try {
     const faq = await FAQ.findOne({
       _id: req.params.id,
@@ -84,7 +87,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // Create a new FAQ
-router.post('/', auth, async (req, res) => {
+router.post('/', ensureDBConnection, auth, async (req, res) => {
   try {
     const { question, answer } = req.body;
 
@@ -102,9 +105,50 @@ router.post('/', auth, async (req, res) => {
 
     await faq.save();
 
+    // Auto-resolve similar unanswered questions
+    let autoResolvedCount = 0;
+    try {
+      // Get all pending unanswered questions for this user
+      const pendingQuestions = await UnansweredQuestion.find({
+        userId: req.user.userId,
+        status: 'pending'
+      }).lean();
+
+      if (pendingQuestions.length > 0) {
+        // Find similar questions using similarity matching
+        const similarQuestions = findSimilarQuestions(
+          question.trim(),
+          pendingQuestions,
+          0.65 // 65% similarity threshold
+        );
+
+        if (similarQuestions.length > 0) {
+          // Bulk update all similar questions to resolved
+          const questionIds = similarQuestions.map(q => q._id);
+          const updateResult = await UnansweredQuestion.updateMany(
+            { _id: { $in: questionIds } },
+            {
+              $set: {
+                status: 'resolved',
+                resolvedAt: new Date(),
+                resolvedByFaqId: faq._id
+              }
+            }
+          );
+
+          autoResolvedCount = updateResult.modifiedCount || 0;
+          console.log(`✅ Auto-resolved ${autoResolvedCount} similar unanswered questions`);
+        }
+      }
+    } catch (autoResolveError) {
+      console.error('❌ Error in auto-resolution:', autoResolveError);
+      // Don't fail the FAQ creation if auto-resolution fails
+    }
+
     res.status(201).json({
       message: 'FAQ created successfully.',
-      faq
+      faq,
+      autoResolvedCount
     });
   } catch (error) {
     console.error('Create FAQ error:', error);
@@ -115,7 +159,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // Update a specific FAQ
-router.put('/:id', auth, async (req, res) => {
+router.put('/:id', ensureDBConnection, auth, async (req, res) => {
   try {
     const { question, answer } = req.body;
 
@@ -154,7 +198,7 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // Delete a specific FAQ
-router.delete('/:id', auth, async (req, res) => {
+router.delete('/:id', ensureDBConnection, auth, async (req, res) => {
   try {
     const faq = await FAQ.findOneAndDelete({
       _id: req.params.id,
@@ -177,7 +221,7 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // Extract FAQs from user's website
-router.post('/extract', auth, async (req, res) => {
+router.post('/extract', ensureDBConnection, auth, async (req, res) => {
   try {
     // Check if user has business information with website
     const business = await Business.findOne({ user: req.user.userId });
@@ -193,8 +237,8 @@ router.post('/extract', auth, async (req, res) => {
     const response = await axios.post(`${faqScraperUrl}/extract_faqs`, {
       url: business.website,
       userid: req.user.userId,
-      max_pages:10,
-      max_depth:3
+      max_pages: 10,
+      max_depth: 3
     });
 
     // Check if response contains "okay" status
@@ -234,11 +278,11 @@ router.post('/test-push', (req, res) => {
 });
 
 // Push extracted FAQs to database (for FAQ extraction service)
-router.post('/push-extracted', async (req, res) => {
+router.post('/push-extracted', ensureDBConnection, async (req, res) => {
   console.log('📤 PUSH EXTRACTED ENDPOINT HIT!');
   console.log('Request body keys:', Object.keys(req.body));
   console.log('Request headers:', req.headers);
-  
+
   try {
     const { userId, faqs } = req.body;
 
@@ -251,7 +295,7 @@ router.post('/push-extracted', async (req, res) => {
     }
 
     console.log(`✅ Processing ${faqs.length} FAQs for user ${userId}`);
-    
+
     const savedFaqs = [];
     const errors = [];
 
@@ -286,7 +330,7 @@ router.post('/push-extracted', async (req, res) => {
     }
 
     console.log(`✅ Successfully saved ${savedFaqs.length} FAQs, ${errors.length} errors`);
-    
+
     res.json({
       message: `Successfully processed ${savedFaqs.length} FAQs.`,
       savedCount: savedFaqs.length,
@@ -304,50 +348,11 @@ router.post('/push-extracted', async (req, res) => {
   }
 });
 
-// Get FAQ extraction status for authenticated user
-router.get('/extraction-status', auth, async (req, res) => {
-  console.log('🔍 FAQ EXTRACTION STATUS CHECK ENDPOINT HIT!');
-  console.log('User ID:', req.user.userId);
-  
-  try {
-    const business = await Business.findOne({ user: req.user.userId });
-
-    if (!business) {
-      console.log('❌ Business not found for user:', req.user.userId);
-      return res.status(404).json({
-        message: 'Business information not found.',
-        status: null
-      });
-    }
-
-    const status = business.faqExtractionStatus || 'idle';
-    const updatedAt = business.faqExtractionUpdatedAt;
-    const taskId = business.faqExtractionTaskId;
-
-    console.log(`✅ Retrieved status "${status}" for user ${req.user.userId}`);
-    
-    res.json({
-      status: status,
-      updatedAt: updatedAt,
-      taskId: taskId,
-      message: status === 'idle' ? 'No extraction in progress' : `Current status: ${status}`
-    });
-
-  } catch (error) {
-    console.error('Get FAQ extraction status error:', error);
-    res.status(500).json({
-      message: 'Failed to retrieve FAQ extraction status.',
-      error: error.message,
-      status: null
-    });
-  }
-});
-
 // Update FAQ extraction status
-router.post('/update-status', async (req, res) => {
+router.post('/update-status', ensureDBConnection, async (req, res) => {
   console.log('🔄 FAQ EXTRACTION STATUS UPDATE ENDPOINT HIT!');
   console.log('Request body:', req.body);
-  
+
   try {
     const { userId, status, taskId } = req.body;
 
@@ -390,7 +395,7 @@ router.post('/update-status', async (req, res) => {
     }
 
     console.log(`✅ Successfully updated FAQ extraction status to "${status}" for user ${userId}`);
-    
+
     res.json({
       message: 'FAQ extraction status updated successfully.',
       status: status,
@@ -402,6 +407,146 @@ router.post('/update-status', async (req, res) => {
     res.status(500).json({
       message: 'Failed to update FAQ extraction status.',
       error: error.message
+    });
+  }
+});
+
+// ========== UNANSWERED QUESTIONS ENDPOINTS ==========
+
+// Get all unanswered questions for the authenticated user
+router.get('/unanswered', ensureDBConnection, auth, async (req, res) => {
+  try {
+    const { status } = req.query;
+
+    const query = { userId: req.user.userId };
+    if (status && ['pending', 'resolved'].includes(status)) {
+      query.status = status;
+    }
+
+    const unansweredQuestions = await UnansweredQuestion.find(query)
+      .sort({ createdAt: -1 })
+      .populate('resolvedByFaqId', 'question answer');
+
+    res.json({
+      unansweredQuestions,
+      total: unansweredQuestions.length
+    });
+  } catch (error) {
+    console.error('Get unanswered questions error:', error);
+    res.status(500).json({
+      message: 'Failed to fetch unanswered questions.'
+    });
+  }
+});
+
+// Manually resolve an unanswered question
+router.put('/unanswered/:id/resolve', ensureDBConnection, auth, async (req, res) => {
+  try {
+    const unansweredQuestion = await UnansweredQuestion.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        userId: req.user.userId
+      },
+      {
+        $set: {
+          status: 'resolved',
+          resolvedAt: new Date()
+        }
+      },
+      { new: true }
+    );
+
+    if (!unansweredQuestion) {
+      return res.status(404).json({ message: 'Unanswered question not found.' });
+    }
+
+    res.json({
+      message: 'Question marked as resolved.',
+      unansweredQuestion
+    });
+  } catch (error) {
+    console.error('Resolve unanswered question error:', error);
+    res.status(500).json({
+      message: 'Failed to resolve question.'
+    });
+  }
+});
+
+// Convert an unanswered question to FAQ
+router.post('/unanswered/:id/convert', ensureDBConnection, auth, async (req, res) => {
+  try {
+    const { answer } = req.body;
+
+    if (!answer) {
+      return res.status(400).json({
+        message: 'Answer is required to convert to FAQ.'
+      });
+    }
+
+    // Find the unanswered question
+    const unansweredQuestion = await UnansweredQuestion.findOne({
+      _id: req.params.id,
+      userId: req.user.userId
+    });
+
+    if (!unansweredQuestion) {
+      return res.status(404).json({ message: 'Unanswered question not found.' });
+    }
+
+    // Create FAQ from unanswered question
+    const faq = new FAQ({
+      question: unansweredQuestion.question.trim(),
+      answer: answer.trim(),
+      user: req.user.userId
+    });
+
+    await faq.save();
+
+    // Auto-resolve similar unanswered questions
+    let autoResolvedCount = 0;
+    try {
+      const pendingQuestions = await UnansweredQuestion.find({
+        userId: req.user.userId,
+        status: 'pending'
+      }).lean();
+
+      if (pendingQuestions.length > 0) {
+        const similarQuestions = findSimilarQuestions(
+          unansweredQuestion.question.trim(),
+          pendingQuestions,
+          0.65
+        );
+
+        if (similarQuestions.length > 0) {
+          const questionIds = similarQuestions.map(q => q._id);
+          const updateResult = await UnansweredQuestion.updateMany(
+            { _id: { $in: questionIds } },
+            {
+              $set: {
+                status: 'resolved',
+                resolvedAt: new Date(),
+                resolvedByFaqId: faq._id
+              }
+            }
+          );
+
+          autoResolvedCount = updateResult.modifiedCount || 0;
+          console.log(`✅ Auto-resolved ${autoResolvedCount} similar unanswered questions`);
+        }
+      }
+    } catch (autoResolveError) {
+      console.error('❌ Error in auto-resolution:', autoResolveError);
+    }
+
+    res.status(201).json({
+      message: 'FAQ created successfully from unanswered question.',
+      faq,
+      autoResolvedCount
+    });
+  } catch (error) {
+    console.error('Convert unanswered to FAQ error:', error);
+    res.status(500).json({
+      message: 'Failed to convert question to FAQ.'
     });
   }
 });

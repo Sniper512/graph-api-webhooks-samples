@@ -2,11 +2,12 @@ const express = require('express');
 const Business = require('../models/Business');
 const User = require('../models/User');
 const auth = require('../middleware/auth');
+const { ensureDBConnection } = require('../utils/db');
 
 const router = express.Router();
 
 // Create business information
-router.post('/', auth, async (req, res) => {
+router.post('/', ensureDBConnection, auth, async (req, res) => {
   try {
     const {
       businessName,
@@ -86,7 +87,7 @@ router.post('/', auth, async (req, res) => {
 });
 
 // Get business information
-router.get('/', auth, async (req, res) => {
+router.get('/', ensureDBConnection, auth, async (req, res) => {
   try {
     const business = await Business.findOne({ user: req.user.userId });
 
@@ -121,7 +122,7 @@ router.get('/', auth, async (req, res) => {
 });
 
 // Update business information
-router.put('/', auth, async (req, res) => {
+router.put('/', ensureDBConnection, auth, async (req, res) => {
   try {
     const {
       businessName,
@@ -200,7 +201,7 @@ router.put('/', auth, async (req, res) => {
 });
 
 // Delete business information
-router.delete('/', auth, async (req, res) => {
+router.delete('/', ensureDBConnection, auth, async (req, res) => {
   try {
     const business = await Business.findOneAndDelete({ user: req.user.userId });
 

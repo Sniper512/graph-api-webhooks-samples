@@ -14,6 +14,7 @@ const express = require("express");
 const cors = require("cors");
 const xhub = require("express-x-hub");
 const axios = require("axios");
+const { connectDB } = require("../utils/db");
 
 // Import routes
 const authRoutes = require("../routes/auth");
@@ -26,26 +27,18 @@ const googleCalendarRoutes = require("../routes/googleCalendar");
 
 // Import models
 const Conversation = require("../models/Conversation");
+const UnansweredQuestion = require("../models/UnansweredQuestion");
 const { google } = require('googleapis');
+
+// Import utilities
+const { isFailedResponse } = require("../utils/similarity");
 
 const app = express();
 
 app.set("port", process.env.PORT || 5000);
 
-// Connect to MongoDB
-mongoose
-	.connect(process.env.DB_URL)
-	.then(() => {
-		console.log("Connected to MongoDB");
-		// Note: Auto-archiving disabled for MVP - keeping all conversation history
-		// Uncomment below to enable auto-archiving after 7 days:
-		// setInterval(() => {
-		// 	Conversation.archiveOldConversations()
-		// 		.then(() => console.log("✅ Old conversations archived"))
-		// 		.catch(err => console.error("❌ Error archiving conversations:", err));
-		// }, 24 * 60 * 60 * 1000); // Run daily
-	})
-	.catch((err) => console.error("MongoDB connection error:", err));
+// Initialize MongoDB connection for serverless
+connectDB().catch((err) => console.error("MongoDB connection error:", err));
 
 app.listen(app.get("port"));
 
@@ -64,7 +57,7 @@ app.use(
 		origin: function (origin, callback) {
 			// Allow requests with no origin (mobile apps, Postman, etc.)
 			if (!origin) return callback(null, true);
-			
+
 			if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
 				callback(null, true);
 			} else {
@@ -85,10 +78,10 @@ app.use(bodyParser.json());
 // Session middleware for storing temporary data
 const session = require('express-session');
 app.use(session({
-  secret: process.env.APP_SECRET || 'your_session_secret',
-  resave: false,
-  saveUninitialized: true,
-  cookie: { secure: false } // Set to true if using HTTPS
+	secret: process.env.APP_SECRET || 'your_session_secret',
+	resave: false,
+	saveUninitialized: true,
+	cookie: { secure: false } // Set to true if using HTTPS
 }));
 
 // Mount auth routes
@@ -117,580 +110,580 @@ var received_updates = [];
 
 // Tool functions for booking
 const getGoogleCalendarRedirectUri = () => {
-  // Check if we're in production
-  if (process.env.NODE_ENV === 'production' || process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD) {
-    return process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
-  }
-  return process.env.GOOGLE_CALENDAR_REDIRECT_URI_LOCAL || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+	// Check if we're in production
+	if (process.env.NODE_ENV === 'production' || process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD) {
+		return process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+	}
+	return process.env.GOOGLE_CALENDAR_REDIRECT_URI_LOCAL || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
 };
 
 async function refreshAccessTokenIfNeeded(user) {
-  const now = new Date();
-  if (user.googleCalendarTokenExpiry && user.googleCalendarTokenExpiry <= now) {
-    try {
-      const oauth2Client = new google.auth.OAuth2(
-        process.env.GOOGLE_CALENDAR_CLIENT_ID,
-        process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-        getGoogleCalendarRedirectUri()
-      );
-      oauth2Client.setCredentials({ refresh_token: user.googleCalendarRefreshToken });
-      const { credentials } = await oauth2Client.refreshAccessToken();
-      user.googleCalendarAccessToken = credentials.access_token;
-      user.googleCalendarTokenExpiry = new Date(credentials.expiry_date);
-      await user.save();
-    } catch (error) {
-      console.error('❌ Failed to refresh Google Calendar access token:', error);
-      // Mark integration as disconnected if refresh fails
-      user.googleCalendarIntegrationStatus = 'disconnected';
-      user.googleCalendarAccessToken = null;
-      user.googleCalendarRefreshToken = null;
-      user.googleCalendarTokenExpiry = null;
-      await user.save();
-      throw new Error('Google Calendar authentication expired. Please reconnect.');
-    }
-  }
-  return user.googleCalendarAccessToken;
+	const now = new Date();
+	if (user.googleCalendarTokenExpiry && user.googleCalendarTokenExpiry <= now) {
+		try {
+			const oauth2Client = new google.auth.OAuth2(
+				process.env.GOOGLE_CALENDAR_CLIENT_ID,
+				process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+				getGoogleCalendarRedirectUri()
+			);
+			oauth2Client.setCredentials({ refresh_token: user.googleCalendarRefreshToken });
+			const { credentials } = await oauth2Client.refreshAccessToken();
+			user.googleCalendarAccessToken = credentials.access_token;
+			user.googleCalendarTokenExpiry = new Date(credentials.expiry_date);
+			await user.save();
+		} catch (error) {
+			console.error('❌ Failed to refresh Google Calendar access token:', error);
+			// Mark integration as disconnected if refresh fails
+			user.googleCalendarIntegrationStatus = 'disconnected';
+			user.googleCalendarAccessToken = null;
+			user.googleCalendarRefreshToken = null;
+			user.googleCalendarTokenExpiry = null;
+			await user.save();
+			throw new Error('Google Calendar authentication expired. Please reconnect.');
+		}
+	}
+	return user.googleCalendarAccessToken;
 }
 
 // Helper function to generate proper date ranges for booking
 function generateBookingDateRange() {
-  const today = new Date();
-  const startDate = new Date(today);
-  const endDate = new Date(today);
-  endDate.setDate(endDate.getDate() + 14); // Next 14 days
-  
-  const formatISODate = (date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-  
-  return {
-    startDate: formatISODate(startDate),
-    endDate: formatISODate(endDate)
-  };
+	const today = new Date();
+	const startDate = new Date(today);
+	const endDate = new Date(today);
+	endDate.setDate(endDate.getDate() + 14); // Next 14 days
+
+	const formatISODate = (date) => {
+		const year = date.getFullYear();
+		const month = String(date.getMonth() + 1).padStart(2, '0');
+		const day = String(date.getDate()).padStart(2, '0');
+		return `${year}-${month}-${day}`;
+	};
+
+	return {
+		startDate: formatISODate(startDate),
+		endDate: formatISODate(endDate)
+	};
 }
 async function getAvailableBookingSlots(userId, startDate, endDate) {
-  try {
-    console.log(`🔍 Getting available slots for user ${userId}, dates: ${startDate} to ${endDate}`);
-    const Business = require("../models/Business");
-    const business = await Business.findOne({ user: userId });
-    console.log(`🏢 Business found:`, !!business);
-    if (!business) return { availableSlots: [] };
+	try {
+		console.log(`🔍 Getting available slots for user ${userId}, dates: ${startDate} to ${endDate}`);
+		const Business = require("../models/Business");
+		const business = await Business.findOne({ user: userId });
+		console.log(`🏢 Business found:`, !!business);
+		if (!business) return { availableSlots: [] };
 
-    const TimeSlot = require("../models/TimeSlot");
-    const timeSlots = await TimeSlot.find({ business: business._id, isActive: true });
-    console.log(`⏰ Time slots found: ${timeSlots.length}`);
+		const TimeSlot = require("../models/TimeSlot");
+		const timeSlots = await TimeSlot.find({ business: business._id, isActive: true });
+		console.log(`⏰ Time slots found: ${timeSlots.length}`);
 
-    const User = require("../models/User");
-    const user = await User.findById(userId);
-    console.log(`👤 User Google Calendar status:`, user?.googleCalendarIntegrationStatus);
+		const User = require("../models/User");
+		const user = await User.findById(userId);
+		console.log(`👤 User Google Calendar status:`, user?.googleCalendarIntegrationStatus);
 
-    // Get business timezone early for Google Calendar queries
-    const businessTimezone = business.timezone || 'UTC';
-    console.log(`🌍 Business timezone: ${businessTimezone}`);
+		// Get business timezone early for Google Calendar queries
+		const businessTimezone = business.timezone || 'UTC';
+		console.log(`🌍 Business timezone: ${businessTimezone}`);
 
-    let bookings = [];
-    if (user && user.googleCalendarIntegrationStatus === 'connected') {
-      console.log(`📅 Fetching existing bookings from Google Calendar...`);
-      const accessToken = await refreshAccessTokenIfNeeded(user);
-      const oauth2Client = new google.auth.OAuth2(
-        process.env.GOOGLE_CALENDAR_CLIENT_ID,
-        process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-        process.env.GOOGLE_CALENDAR_REDIRECT_URI
-      );
-      oauth2Client.setCredentials({ access_token: accessToken });
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+		let bookings = [];
+		if (user && user.googleCalendarIntegrationStatus === 'connected') {
+			console.log(`📅 Fetching existing bookings from Google Calendar...`);
+			const accessToken = await refreshAccessTokenIfNeeded(user);
+			const oauth2Client = new google.auth.OAuth2(
+				process.env.GOOGLE_CALENDAR_CLIENT_ID,
+				process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+				process.env.GOOGLE_CALENDAR_REDIRECT_URI
+			);
+			oauth2Client.setCredentials({ access_token: accessToken });
+			const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-      // Query Google Calendar using business timezone
-      // Get midnight of start date and end of end date in business timezone
-      const startDateObj = new Date(startDate + 'T00:00:00');
-      const endDateObj = new Date(endDate + 'T23:59:59');
+			// Query Google Calendar using business timezone
+			// Get midnight of start date and end of end date in business timezone
+			const startDateObj = new Date(startDate + 'T00:00:00');
+			const endDateObj = new Date(endDate + 'T23:59:59');
 
-      // Format as ISO strings (Google Calendar handles timezone conversion)
-      const timeMin = startDateObj.toISOString();
-      const timeMax = endDateObj.toISOString();
-      console.log(`📅 Calendar query range: ${timeMin} to ${timeMax} (${businessTimezone})`);
+			// Format as ISO strings (Google Calendar handles timezone conversion)
+			const timeMin = startDateObj.toISOString();
+			const timeMax = endDateObj.toISOString();
+			console.log(`📅 Calendar query range: ${timeMin} to ${timeMax} (${businessTimezone})`);
 
-      const response = await calendar.events.list({
-        calendarId: 'primary',
-        timeMin,
-        timeMax,
-        singleEvents: true,
-        orderBy: 'startTime'
-      });
-      bookings = response.data.items.filter(event => {
-        const summary = (event.summary || '').toLowerCase();
-        const description = (event.description || '').toLowerCase();
-        return summary.includes('booking') || description.includes('booking');
-      });
-      console.log(`📅 Existing bookings found: ${bookings.length}`);
-    }
+			const response = await calendar.events.list({
+				calendarId: 'primary',
+				timeMin,
+				timeMax,
+				singleEvents: true,
+				orderBy: 'startTime'
+			});
+			bookings = response.data.items.filter(event => {
+				const summary = (event.summary || '').toLowerCase();
+				const description = (event.description || '').toLowerCase();
+				return summary.includes('booking') || description.includes('booking');
+			});
+			console.log(`📅 Existing bookings found: ${bookings.length}`);
+		}
 
 
-    console.log(`🔄 Calculating available slots...`);
-    const availableSlots = [];
+		console.log(`🔄 Calculating available slots...`);
+		const availableSlots = [];
 
-    // Helper function to convert time string to minutes
-    const timeToMinutes = (timeStr) => {
-      const [hours, minutes] = timeStr.split(':').map(Number);
-      return hours * 60 + minutes;
-    };
+		// Helper function to convert time string to minutes
+		const timeToMinutes = (timeStr) => {
+			const [hours, minutes] = timeStr.split(':').map(Number);
+			return hours * 60 + minutes;
+		};
 
-    // Helper function to convert minutes to time string
-    const minutesToTime = (minutes) => {
-      const hours = Math.floor(minutes / 60);
-      const mins = minutes % 60;
-      return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
-    };
+		// Helper function to convert minutes to time string
+		const minutesToTime = (minutes) => {
+			const hours = Math.floor(minutes / 60);
+			const mins = minutes % 60;
+			return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+		};
 
-    // Helper to get timezone offset (e.g., "+05:00")
-    const getTzOffset = (date) => {
-      try {
-        const str = date.toLocaleString('en-US', { timeZone: businessTimezone, timeZoneName: 'longOffset' });
-        const match = str.match(/GMT([+-]\d{2}):?(\d{2})/);
-        if (match) {
-          return `${match[1]}:${match[2]}`;
-        }
-        return '+00:00';
-      } catch (e) {
-        console.error('Error getting timezone offset:', e);
-        return '+00:00';
-      }
-    };
+		// Helper to get timezone offset (e.g., "+05:00")
+		const getTzOffset = (date) => {
+			try {
+				const str = date.toLocaleString('en-US', { timeZone: businessTimezone, timeZoneName: 'longOffset' });
+				const match = str.match(/GMT([+-]\d{2}):?(\d{2})/);
+				if (match) {
+					return `${match[1]}:${match[2]}`;
+				}
+				return '+00:00';
+			} catch (e) {
+				console.error('Error getting timezone offset:', e);
+				return '+00:00';
+			}
+		};
 
-    // Parse start and end dates properly in business timezone
-    const start = new Date(startDate + 'T00:00:00');
-    const end = new Date(endDate + 'T23:59:59');
+		// Parse start and end dates properly in business timezone
+		const start = new Date(startDate + 'T00:00:00');
+		const end = new Date(endDate + 'T23:59:59');
 
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      // Get the date string in YYYY-MM-DD format
-      const dateStr = d.toISOString().split('T')[0];
+		for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+			// Get the date string in YYYY-MM-DD format
+			const dateStr = d.toISOString().split('T')[0];
 
-      // Get day of week in business timezone (CRITICAL FIX)
-      const dateInBusinessTz = new Date(dateStr + 'T12:00:00'); // Use noon to avoid DST edge cases
-      const dayName = dateInBusinessTz.toLocaleDateString('en-US', {
-        timeZone: businessTimezone,
-        weekday: 'long'
-      });
-      const dayOfWeek = dateInBusinessTz.toLocaleDateString('en-US', {
-        timeZone: businessTimezone,
-        weekday: 'short'
-      });
+			// Get day of week in business timezone (CRITICAL FIX)
+			const dateInBusinessTz = new Date(dateStr + 'T12:00:00'); // Use noon to avoid DST edge cases
+			const dayName = dateInBusinessTz.toLocaleDateString('en-US', {
+				timeZone: businessTimezone,
+				weekday: 'long'
+			});
+			const dayOfWeek = dateInBusinessTz.toLocaleDateString('en-US', {
+				timeZone: businessTimezone,
+				weekday: 'short'
+			});
 
-      // Convert day name to number (0=Sunday, 1=Monday, etc.)
-      const dayMap = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };
-      const dayOfWeekNum = dayMap[dayOfWeek];
-      const daySlots = timeSlots.filter(ts => ts.dayOfWeek === dayOfWeekNum);
-      console.log(`📅 Day ${dateStr} (${dayName}): ${daySlots.length} time slots configured`);
+			// Convert day name to number (0=Sunday, 1=Monday, etc.)
+			const dayMap = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };
+			const dayOfWeekNum = dayMap[dayOfWeek];
+			const daySlots = timeSlots.filter(ts => ts.dayOfWeek === dayOfWeekNum);
+			console.log(`📅 Day ${dateStr} (${dayName}): ${daySlots.length} time slots configured`);
 
-      if (daySlots.length === 0) continue;
+			if (daySlots.length === 0) continue;
 
-      for (const ts of daySlots) {
-        console.log(`  ⏰ TimeSlot ID ${ts._id}: ${ts.slots.length} slot configurations`);
-        
-        for (const slot of ts.slots) {
-          if (!slot.isActive) {
-            console.log(`    ❌ Slot ${slot.startTime}-${slot.endTime} is inactive`);
-            continue;
-          }
-          
-          console.log(`    ✅ Slot ${slot.startTime}-${slot.endTime} (${slot.duration}min, max ${slot.maxBookings} bookings) is active`);
-          
-          // Generate individual appointment slots based on duration
-          const startMinutes = timeToMinutes(slot.startTime);
-          const endMinutes = timeToMinutes(slot.endTime);
-          const duration = slot.duration;
-          const maxBookings = slot.maxBookings || 1;
-          
-          console.log(`      🔄 Generating individual ${duration}-minute appointment slots...`);
-          
-          // Create individual appointment slots (e.g., 9:00-9:30, 9:30-10:00, etc.)
-          for (let currentMinutes = startMinutes; currentMinutes + duration <= endMinutes; currentMinutes += duration) {
-            const offset = getTzOffset(dateInBusinessTz);
-            const appointmentStartTime = minutesToTime(currentMinutes);
-            const appointmentEndTime = minutesToTime(currentMinutes + duration);
+			for (const ts of daySlots) {
+				console.log(`  ⏰ TimeSlot ID ${ts._id}: ${ts.slots.length} slot configurations`);
 
-            // Create dates using the business timezone offset
-            // format: 2025-12-29T09:00:00+05:00
-            const startDateTimeStr = `${dateStr}T${appointmentStartTime}:00${offset}`;
-            const endDateTimeStr = `${dateStr}T${appointmentEndTime}:00${offset}`;
+				for (const slot of ts.slots) {
+					if (!slot.isActive) {
+						console.log(`    ❌ Slot ${slot.startTime}-${slot.endTime} is inactive`);
+						continue;
+					}
 
-            // Create Date objects for comparison (these get converted to UTC internally)
-            const appointmentStart = new Date(startDateTimeStr);
-            const appointmentEnd = new Date(endDateTimeStr);
+					console.log(`    ✅ Slot ${slot.startTime}-${slot.endTime} (${slot.duration}min, max ${slot.maxBookings} bookings) is active`);
 
-            // Count bookings that overlap with THIS specific appointment slot
-            let bookingsInAppointment = 0;
-            for (const booking of bookings) {
-              const bStart = new Date(booking.start.dateTime || booking.start.date);
-              const bEnd = new Date(booking.end.dateTime || booking.end.date);
+					// Generate individual appointment slots based on duration
+					const startMinutes = timeToMinutes(slot.startTime);
+					const endMinutes = timeToMinutes(slot.endTime);
+					const duration = slot.duration;
+					const maxBookings = slot.maxBookings || 1;
 
-              // Check if booking overlaps with this specific appointment time
-              if (appointmentStart < bEnd && appointmentEnd > bStart) {
-                bookingsInAppointment++;
-                console.log(`        📊 Overlap found: ${booking.summary} (${bStart.toISOString()} - ${bEnd.toISOString()})`);
-              }
-            }
+					console.log(`      🔄 Generating individual ${duration}-minute appointment slots...`);
 
-            const isAvailable = bookingsInAppointment < maxBookings;
+					// Create individual appointment slots (e.g., 9:00-9:30, 9:30-10:00, etc.)
+					for (let currentMinutes = startMinutes; currentMinutes + duration <= endMinutes; currentMinutes += duration) {
+						const offset = getTzOffset(dateInBusinessTz);
+						const appointmentStartTime = minutesToTime(currentMinutes);
+						const appointmentEndTime = minutesToTime(currentMinutes + duration);
 
-            if (isAvailable) {
-              console.log(`        ✅ ${appointmentStartTime}-${appointmentEndTime} available (${bookingsInAppointment}/${maxBookings})`);
-              availableSlots.push({
-                date: dateStr,
-                dayOfWeek: dayOfWeekNum,
-                dayName: dayName,
-                startTime: appointmentStartTime,
-                endTime: appointmentEndTime,
-                // CRITICAL: Preserve timezone format for AI to use (DO NOT convert to UTC)
-                startDateTime: startDateTimeStr,
-                endDateTime: endDateTimeStr,
-                duration: duration,
-                currentBookings: bookingsInAppointment,
-                maxBookings: maxBookings
-              });
-            } else {
-              console.log(`        ❌ ${appointmentStartTime}-${appointmentEndTime} FULL (${bookingsInAppointment}/${maxBookings})`);
-            }
-          }
-        }
-      }
-    }
-    console.log(`✅ Available slots calculated: ${availableSlots.length}`);
+						// Create dates using the business timezone offset
+						// format: 2025-12-29T09:00:00+05:00
+						const startDateTimeStr = `${dateStr}T${appointmentStartTime}:00${offset}`;
+						const endDateTimeStr = `${dateStr}T${appointmentEndTime}:00${offset}`;
 
-    // Log first few slots with full details for debugging
-    if (availableSlots.length > 0) {
-      console.log(`\n📊 Sample slot details (first 3):`);
-      availableSlots.slice(0, 3).forEach((slot, idx) => {
-        console.log(`  ${idx + 1}. ${slot.dayName} ${slot.date} ${slot.startTime}-${slot.endTime}`);
-        console.log(`     startDateTime: ${slot.startDateTime}`);
-        console.log(`     endDateTime: ${slot.endDateTime}`);
-      });
-      console.log();
-    }
+						// Create Date objects for comparison (these get converted to UTC internally)
+						const appointmentStart = new Date(startDateTimeStr);
+						const appointmentEnd = new Date(endDateTimeStr);
 
-    return { availableSlots };
-  } catch (error) {
-    console.error('❌ Error getting available slots:', error);
-    return { availableSlots: [] };
-  }
+						// Count bookings that overlap with THIS specific appointment slot
+						let bookingsInAppointment = 0;
+						for (const booking of bookings) {
+							const bStart = new Date(booking.start.dateTime || booking.start.date);
+							const bEnd = new Date(booking.end.dateTime || booking.end.date);
+
+							// Check if booking overlaps with this specific appointment time
+							if (appointmentStart < bEnd && appointmentEnd > bStart) {
+								bookingsInAppointment++;
+								console.log(`        📊 Overlap found: ${booking.summary} (${bStart.toISOString()} - ${bEnd.toISOString()})`);
+							}
+						}
+
+						const isAvailable = bookingsInAppointment < maxBookings;
+
+						if (isAvailable) {
+							console.log(`        ✅ ${appointmentStartTime}-${appointmentEndTime} available (${bookingsInAppointment}/${maxBookings})`);
+							availableSlots.push({
+								date: dateStr,
+								dayOfWeek: dayOfWeekNum,
+								dayName: dayName,
+								startTime: appointmentStartTime,
+								endTime: appointmentEndTime,
+								// CRITICAL: Preserve timezone format for AI to use (DO NOT convert to UTC)
+								startDateTime: startDateTimeStr,
+								endDateTime: endDateTimeStr,
+								duration: duration,
+								currentBookings: bookingsInAppointment,
+								maxBookings: maxBookings
+							});
+						} else {
+							console.log(`        ❌ ${appointmentStartTime}-${appointmentEndTime} FULL (${bookingsInAppointment}/${maxBookings})`);
+						}
+					}
+				}
+			}
+		}
+		console.log(`✅ Available slots calculated: ${availableSlots.length}`);
+
+		// Log first few slots with full details for debugging
+		if (availableSlots.length > 0) {
+			console.log(`\n📊 Sample slot details (first 3):`);
+			availableSlots.slice(0, 3).forEach((slot, idx) => {
+				console.log(`  ${idx + 1}. ${slot.dayName} ${slot.date} ${slot.startTime}-${slot.endTime}`);
+				console.log(`     startDateTime: ${slot.startDateTime}`);
+				console.log(`     endDateTime: ${slot.endDateTime}`);
+			});
+			console.log();
+		}
+
+		return { availableSlots };
+	} catch (error) {
+		console.error('❌ Error getting available slots:', error);
+		return { availableSlots: [] };
+	}
 }
 async function createBooking(userId, conversationId, senderId, platform, summary, start, end, description, attendeeEmail, attendeeName) {
-  try {
-    console.log(`\n🎯 ========== CREATE BOOKING CALLED ==========`);
-    console.log(`📋 Summary: ${summary}`);
-    console.log(`⏰ Start: ${start}`);
-    console.log(`⏰ End: ${end}`);
-    console.log(`📝 Description: ${description}`);
-    console.log(`👤 Attendee: ${attendeeName} (${attendeeEmail})`);
-    console.log(`🎯 ============================================\n`);
+	try {
+		console.log(`\n🎯 ========== CREATE BOOKING CALLED ==========`);
+		console.log(`📋 Summary: ${summary}`);
+		console.log(`⏰ Start: ${start}`);
+		console.log(`⏰ End: ${end}`);
+		console.log(`📝 Description: ${description}`);
+		console.log(`👤 Attendee: ${attendeeName} (${attendeeEmail})`);
+		console.log(`🎯 ============================================\n`);
 
-    const User = require("../models/User");
-    const Booking = require("../models/Booking");
-    const TimeSlot = require("../models/TimeSlot");
-    const Business = require("../models/Business");
+		const User = require("../models/User");
+		const Booking = require("../models/Booking");
+		const TimeSlot = require("../models/TimeSlot");
+		const Business = require("../models/Business");
 
-    const user = await User.findById(userId);
-    if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
-      return { error: "Google Calendar not connected" };
-    }
-    
-    const accessToken = await refreshAccessTokenIfNeeded(user);
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CALENDAR_CLIENT_ID,
-      process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-      process.env.GOOGLE_CALENDAR_REDIRECT_URI
-    );
-    oauth2Client.setCredentials({ access_token: accessToken });
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+		const user = await User.findById(userId);
+		if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
+			return { error: "Google Calendar not connected" };
+		}
 
-    // Get business timezone (or use Google Calendar timezone as fallback)
-    const businessInfo = await Business.findOne({ user: userId });
-    let timezone = 'UTC'; // Default fallback
-    
-    if (businessInfo && businessInfo.timezone) {
-      timezone = businessInfo.timezone;
-      console.log(`📍 Using business timezone: ${timezone}`);
-    } else {
-      // Fallback to Google Calendar timezone
-      const calendarInfo = await calendar.calendars.get({
-        calendarId: 'primary'
-      });
-      timezone = calendarInfo.data.timeZone || 'UTC';
-      console.log(`📍 Using Google Calendar timezone: ${timezone}`);
-    }
+		const accessToken = await refreshAccessTokenIfNeeded(user);
+		const oauth2Client = new google.auth.OAuth2(
+			process.env.GOOGLE_CALENDAR_CLIENT_ID,
+			process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+			process.env.GOOGLE_CALENDAR_REDIRECT_URI
+		);
+		oauth2Client.setCredentials({ access_token: accessToken });
+		const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+		// Get business timezone (or use Google Calendar timezone as fallback)
+		const businessInfo = await Business.findOne({ user: userId });
+		let timezone = 'UTC'; // Default fallback
+
+		if (businessInfo && businessInfo.timezone) {
+			timezone = businessInfo.timezone;
+			console.log(`📍 Using business timezone: ${timezone}`);
+		} else {
+			// Fallback to Google Calendar timezone
+			const calendarInfo = await calendar.calendars.get({
+				calendarId: 'primary'
+			});
+			timezone = calendarInfo.data.timeZone || 'UTC';
+			console.log(`📍 Using Google Calendar timezone: ${timezone}`);
+		}
 
 
-    // CRITICAL: Check for conflicts before creating booking
-    console.log(`🔍 Checking for conflicts: ${start} to ${end}`);
+		// CRITICAL: Check for conflicts before creating booking
+		console.log(`🔍 Checking for conflicts: ${start} to ${end}`);
 
-    const requestedStart = new Date(start);
-    const requestedEnd = new Date(end);
+		const requestedStart = new Date(start);
+		const requestedEnd = new Date(end);
 
-    console.log(`🔍 Requested time range (parsed):`);
-    console.log(`   Start: ${requestedStart.toISOString()} (${requestedStart.toString()})`);
-    console.log(`   End: ${requestedEnd.toISOString()} (${requestedEnd.toString()})`);
+		console.log(`🔍 Requested time range (parsed):`);
+		console.log(`   Start: ${requestedStart.toISOString()} (${requestedStart.toString()})`);
+		console.log(`   End: ${requestedEnd.toISOString()} (${requestedEnd.toString()})`);
 
-    // Get existing bookings from Google Calendar for this time range
-    const existingEvents = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: requestedStart.toISOString(),
-      timeMax: requestedEnd.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime'
-    });
+		// Get existing bookings from Google Calendar for this time range
+		const existingEvents = await calendar.events.list({
+			calendarId: 'primary',
+			timeMin: requestedStart.toISOString(),
+			timeMax: requestedEnd.toISOString(),
+			singleEvents: true,
+			orderBy: 'startTime'
+		});
 
-    console.log(`📅 Found ${existingEvents.data.items.length} existing events in this time range`);
-    existingEvents.data.items.forEach((event, idx) => {
-      const eventStart = new Date(event.start.dateTime || event.start.date);
-      const eventEnd = new Date(event.end.dateTime || event.end.date);
-      console.log(`   ${idx + 1}. "${event.summary}": ${eventStart.toISOString()} - ${eventEnd.toISOString()}`);
-    });
+		console.log(`📅 Found ${existingEvents.data.items.length} existing events in this time range`);
+		existingEvents.data.items.forEach((event, idx) => {
+			const eventStart = new Date(event.start.dateTime || event.start.date);
+			const eventEnd = new Date(event.end.dateTime || event.end.date);
+			console.log(`   ${idx + 1}. "${event.summary}": ${eventStart.toISOString()} - ${eventEnd.toISOString()}`);
+		});
 
-    // Check if any existing event conflicts with the requested time
-    const conflicts = existingEvents.data.items.filter(event => {
-      const eventStart = new Date(event.start.dateTime || event.start.date);
-      const eventEnd = new Date(event.end.dateTime || event.end.date);
+		// Check if any existing event conflicts with the requested time
+		const conflicts = existingEvents.data.items.filter(event => {
+			const eventStart = new Date(event.start.dateTime || event.start.date);
+			const eventEnd = new Date(event.end.dateTime || event.end.date);
 
-      // Check for overlap: (StartA < EndB) and (EndA > StartB)
-      const hasOverlap = requestedStart < eventEnd && requestedEnd > eventStart;
+			// Check for overlap: (StartA < EndB) and (EndA > StartB)
+			const hasOverlap = requestedStart < eventEnd && requestedEnd > eventStart;
 
-      if (hasOverlap) {
-        console.log(`⚠️  CONFLICT: "${event.summary}"`);
-        console.log(`     Event: ${eventStart.toISOString()} - ${eventEnd.toISOString()}`);
-        console.log(`     Requested: ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`);
-        console.log(`     Overlap check: ${requestedStart.toISOString()} < ${eventEnd.toISOString()} && ${requestedEnd.toISOString()} > ${eventStart.toISOString()}`);
-      }
+			if (hasOverlap) {
+				console.log(`⚠️  CONFLICT: "${event.summary}"`);
+				console.log(`     Event: ${eventStart.toISOString()} - ${eventEnd.toISOString()}`);
+				console.log(`     Requested: ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`);
+				console.log(`     Overlap check: ${requestedStart.toISOString()} < ${eventEnd.toISOString()} && ${requestedEnd.toISOString()} > ${eventStart.toISOString()}`);
+			}
 
-      return hasOverlap;
-    });
+			return hasOverlap;
+		});
 
-    if (conflicts.length > 0) {
-      console.log(`❌ Cannot create booking - ${conflicts.length} conflict(s) found`);
-      return { 
-        error: "This time slot is already booked. Please choose a different time.",
-        conflicts: conflicts.map(c => ({
-          summary: c.summary,
-          start: c.start.dateTime || c.start.date,
-          end: c.end.dateTime || c.end.date
-        }))
-      };
-    }
+		if (conflicts.length > 0) {
+			console.log(`❌ Cannot create booking - ${conflicts.length} conflict(s) found`);
+			return {
+				error: "This time slot is already booked. Please choose a different time.",
+				conflicts: conflicts.map(c => ({
+					summary: c.summary,
+					start: c.start.dateTime || c.start.date,
+					end: c.end.dateTime || c.end.date
+				}))
+			};
+		}
 
-    // Also check slot capacity limits (reuse businessInfo from above)
-    if (businessInfo) {
-      // Determine date in business timezone to get correct day of week
-      const tz = businessInfo.timezone || 'UTC';
-      const requestedDate = new Date(start);
-      
-      // Get day of week in business timezone
-      const localDateStr = requestedDate.toLocaleString('en-US', { timeZone: tz });
-      const localDate = new Date(localDateStr);
-      const dayOfWeek = localDate.getDay();
+		// Also check slot capacity limits (reuse businessInfo from above)
+		if (businessInfo) {
+			// Determine date in business timezone to get correct day of week
+			const tz = businessInfo.timezone || 'UTC';
+			const requestedDate = new Date(start);
 
-      const timeSlots = await TimeSlot.find({ 
-        business: businessInfo._id, 
-        dayOfWeek: dayOfWeek,
-        isActive: true 
-      });
+			// Get day of week in business timezone
+			const localDateStr = requestedDate.toLocaleString('en-US', { timeZone: tz });
+			const localDate = new Date(localDateStr);
+			const dayOfWeek = localDate.getDay();
 
-      // Get offset for constructing slot times
-      const getTzOffset = (date) => {
-        try {
-          const str = date.toLocaleString('en-US', { timeZone: tz, timeZoneName: 'longOffset' });
-          const match = str.match(/GMT([+-]\d{2}:?\d{2})/);
-          return match ? match[1] : '+00:00';
-        } catch (e) {
-          return '+00:00';
-        }
-      };
-      
-      const offset = getTzOffset(requestedDate);
-      
-      // Get YYYY-MM-DD in business timezone
-      // We can use the parts from toLocaleString to be safe
-      const dateParts = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(requestedDate); // YYYY-MM-DD
-      const businessDateStr = dateParts;
+			const timeSlots = await TimeSlot.find({
+				business: businessInfo._id,
+				dayOfWeek: dayOfWeek,
+				isActive: true
+			});
 
-      // Check if this booking exceeds max bookings for the slot
-      for (const ts of timeSlots) {
-        for (const slot of ts.slots) {
-          if (!slot.isActive) continue;
-          
-          // Construct slot times using business date and offset
-          // format: 2025-12-29T09:00:00+05:00
-          const slotStart = new Date(`${businessDateStr}T${slot.startTime}:00${offset}`);
-          const slotEnd = new Date(`${businessDateStr}T${slot.endTime}:00${offset}`);
-          
-          // Check if requested time overlaps with this slot
-          if (requestedStart < slotEnd && requestedEnd > slotStart) {
-            console.log(`🔍 Checking capacity for slot ${slot.startTime}-${slot.endTime} (max: ${slot.maxBookings})`);
-            
-            // Count existing bookings that OVERLAP with this slot
-            const overlappingBookings = existingEvents.data.items.filter(event => {
-              const eStart = new Date(event.start.dateTime || event.start.date);
-              const eEnd = new Date(event.end.dateTime || event.end.date);
-              
-              // Check if the existing event overlaps with this slot
-              return eStart < slotEnd && eEnd > slotStart;
-            });
-            
-            const bookingCount = overlappingBookings.length;
-            console.log(`📊 Found ${bookingCount} overlapping bookings in this slot`);
-            overlappingBookings.forEach((b, idx) => {
-              console.log(`  ${idx + 1}. ${b.summary} (${new Date(b.start.dateTime || b.start.date).toISOString()} - ${new Date(b.end.dateTime || b.end.date).toISOString()})`);
-            });
+			// Get offset for constructing slot times
+			const getTzOffset = (date) => {
+				try {
+					const str = date.toLocaleString('en-US', { timeZone: tz, timeZoneName: 'longOffset' });
+					const match = str.match(/GMT([+-]\d{2}:?\d{2})/);
+					return match ? match[1] : '+00:00';
+				} catch (e) {
+					return '+00:00';
+				}
+			};
 
-            if (bookingCount >= slot.maxBookings) {
-              console.log(`❌ Slot capacity reached: ${bookingCount}/${slot.maxBookings} bookings`);
-              return { 
-                error: `This time slot has reached its maximum capacity (${slot.maxBookings} bookings). Please choose a different time.`
-              };
-            } else {
-              console.log(`✅ Slot has capacity: ${bookingCount}/${slot.maxBookings} bookings`);
-            }
-          }
-        }
-      }
-    }
+			const offset = getTzOffset(requestedDate);
 
-    console.log(`✅ No conflicts found - proceeding with booking creation`);
+			// Get YYYY-MM-DD in business timezone
+			// We can use the parts from toLocaleString to be safe
+			const dateParts = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(requestedDate); // YYYY-MM-DD
+			const businessDateStr = dateParts;
 
-    // Prepare datetime strings for Google Calendar
-    // If they already have timezone offset (e.g., +05:00), use as-is
-    // If they have 'Z' (UTC), remove it and add timezone separately
-    const formatDateTime = (dateTimeStr) => {
-      // Check if already has timezone offset like +05:00 or -08:00
-      if (/[+-]\d{2}:\d{2}$/.test(dateTimeStr)) {
-        // Already has timezone offset, use as-is
-        return { dateTime: dateTimeStr };
-      } else if (dateTimeStr.endsWith('Z')) {
-        // Has UTC marker, remove and add timezone
-        return { dateTime: dateTimeStr.slice(0, -1), timeZone: timezone };
-      } else {
-        // No timezone info, add timezone
-        return { dateTime: dateTimeStr, timeZone: timezone };
-      }
-    };
+			// Check if this booking exceeds max bookings for the slot
+			for (const ts of timeSlots) {
+				for (const slot of ts.slots) {
+					if (!slot.isActive) continue;
 
-    const event = {
-      summary: `Booking: ${summary}`,
-      description,
-      start: formatDateTime(start),
-      end: formatDateTime(end),
-      attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName }] : []
-    };
+					// Construct slot times using business date and offset
+					// format: 2025-12-29T09:00:00+05:00
+					const slotStart = new Date(`${businessDateStr}T${slot.startTime}:00${offset}`);
+					const slotEnd = new Date(`${businessDateStr}T${slot.endTime}:00${offset}`);
 
-    console.log(`📅 Creating Google Calendar event:`, {
-      summary: event.summary,
-      start: event.start,
-      end: event.end,
-      timezone: timezone
-    });
+					// Check if requested time overlaps with this slot
+					if (requestedStart < slotEnd && requestedEnd > slotStart) {
+						console.log(`🔍 Checking capacity for slot ${slot.startTime}-${slot.endTime} (max: ${slot.maxBookings})`);
 
-    const response = await calendar.events.insert({
-      calendarId: 'primary',
-      resource: event
-    });
+						// Count existing bookings that OVERLAP with this slot
+						const overlappingBookings = existingEvents.data.items.filter(event => {
+							const eStart = new Date(event.start.dateTime || event.start.date);
+							const eEnd = new Date(event.end.dateTime || event.end.date);
 
-    // Save booking to database
-    const booking = new Booking({
-      userId,
-      conversationId,
-      senderId,
-      platform,
-      eventId: response.data.id,
-      summary: `Booking: ${summary}`,
-      description,
-      start: {
-        dateTime: start,
-        timeZone: timezone
-      },
-      end: {
-        dateTime: end,
-        timeZone: timezone
-      },
-      attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName, responseStatus: 'needsAction' }] : []
-    });
+							// Check if the existing event overlaps with this slot
+							return eStart < slotEnd && eEnd > slotStart;
+						});
 
-    await booking.save();
-    console.log(`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`);
+						const bookingCount = overlappingBookings.length;
+						console.log(`📊 Found ${bookingCount} overlapping bookings in this slot`);
+						overlappingBookings.forEach((b, idx) => {
+							console.log(`  ${idx + 1}. ${b.summary} (${new Date(b.start.dateTime || b.start.date).toISOString()} - ${new Date(b.end.dateTime || b.end.date).toISOString()})`);
+						});
 
-    return {
-      eventId: response.data.id,
-      bookingId: booking._id,
-      status: 'created'
-    };
-  } catch (error) {
-    console.error('Error creating booking:', error);
-    return { error: 'Failed to create booking' };
-  }
+						if (bookingCount >= slot.maxBookings) {
+							console.log(`❌ Slot capacity reached: ${bookingCount}/${slot.maxBookings} bookings`);
+							return {
+								error: `This time slot has reached its maximum capacity (${slot.maxBookings} bookings). Please choose a different time.`
+							};
+						} else {
+							console.log(`✅ Slot has capacity: ${bookingCount}/${slot.maxBookings} bookings`);
+						}
+					}
+				}
+			}
+		}
+
+		console.log(`✅ No conflicts found - proceeding with booking creation`);
+
+		// Prepare datetime strings for Google Calendar
+		// If they already have timezone offset (e.g., +05:00), use as-is
+		// If they have 'Z' (UTC), remove it and add timezone separately
+		const formatDateTime = (dateTimeStr) => {
+			// Check if already has timezone offset like +05:00 or -08:00
+			if (/[+-]\d{2}:\d{2}$/.test(dateTimeStr)) {
+				// Already has timezone offset, use as-is
+				return { dateTime: dateTimeStr };
+			} else if (dateTimeStr.endsWith('Z')) {
+				// Has UTC marker, remove and add timezone
+				return { dateTime: dateTimeStr.slice(0, -1), timeZone: timezone };
+			} else {
+				// No timezone info, add timezone
+				return { dateTime: dateTimeStr, timeZone: timezone };
+			}
+		};
+
+		const event = {
+			summary: `Booking: ${summary}`,
+			description,
+			start: formatDateTime(start),
+			end: formatDateTime(end),
+			attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName }] : []
+		};
+
+		console.log(`📅 Creating Google Calendar event:`, {
+			summary: event.summary,
+			start: event.start,
+			end: event.end,
+			timezone: timezone
+		});
+
+		const response = await calendar.events.insert({
+			calendarId: 'primary',
+			resource: event
+		});
+
+		// Save booking to database
+		const booking = new Booking({
+			userId,
+			conversationId,
+			senderId,
+			platform,
+			eventId: response.data.id,
+			summary: `Booking: ${summary}`,
+			description,
+			start: {
+				dateTime: start,
+				timeZone: timezone
+			},
+			end: {
+				dateTime: end,
+				timeZone: timezone
+			},
+			attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName, responseStatus: 'needsAction' }] : []
+		});
+
+		await booking.save();
+		console.log(`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`);
+
+		return {
+			eventId: response.data.id,
+			bookingId: booking._id,
+			status: 'created'
+		};
+	} catch (error) {
+		console.error('Error creating booking:', error);
+		return { error: 'Failed to create booking' };
+	}
 }
 async function cancelBooking(userId, eventId) {
-   try {
-      const User = require("../models/User");
-      const Booking = require("../models/Booking");
-      const user = await User.findById(userId);
-      if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
-         return { error: "Google Calendar not connected" };
-      }
-      const accessToken = await refreshAccessTokenIfNeeded(user);
-      const oauth2Client = new google.auth.OAuth2(
-         process.env.GOOGLE_CALENDAR_CLIENT_ID,
-         process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-         process.env.GOOGLE_CALENDAR_REDIRECT_URI
-      );
-      oauth2Client.setCredentials({ access_token: accessToken });
-      const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+	try {
+		const User = require("../models/User");
+		const Booking = require("../models/Booking");
+		const user = await User.findById(userId);
+		if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
+			return { error: "Google Calendar not connected" };
+		}
+		const accessToken = await refreshAccessTokenIfNeeded(user);
+		const oauth2Client = new google.auth.OAuth2(
+			process.env.GOOGLE_CALENDAR_CLIENT_ID,
+			process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+			process.env.GOOGLE_CALENDAR_REDIRECT_URI
+		);
+		oauth2Client.setCredentials({ access_token: accessToken });
+		const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-      // Delete the event from Google Calendar
-      await calendar.events.delete({
-         calendarId: 'primary',
-         eventId: eventId
-      });
+		// Delete the event from Google Calendar
+		await calendar.events.delete({
+			calendarId: 'primary',
+			eventId: eventId
+		});
 
-      // Delete booking from database
-      const booking = await Booking.findOneAndDelete({ eventId, userId });
+		// Delete booking from database
+		const booking = await Booking.findOneAndDelete({ eventId, userId });
 
-      if (booking) {
-         console.log(`💾 Booking deleted from database: ${booking._id}`);
-      }
+		if (booking) {
+			console.log(`💾 Booking deleted from database: ${booking._id}`);
+		}
 
-      return { eventId, status: 'cancelled' };
-   } catch (error) {
-      console.error('Error cancelling booking:', error);
-      return { error: 'Failed to cancel booking' };
-   }
+		return { eventId, status: 'cancelled' };
+	} catch (error) {
+		console.error('Error cancelling booking:', error);
+		return { error: 'Failed to cancel booking' };
+	}
 }
 async function listUserBookings(conversationId, senderId, userId) {
-  try {
-    const Booking = require("../models/Booking");
-    const bookings = await Booking.find({
-      conversationId,
-      senderId,
-      userId,
-      status: 'active'
-    }).sort({ createdAt: -1 });
+	try {
+		const Booking = require("../models/Booking");
+		const bookings = await Booking.find({
+			conversationId,
+			senderId,
+			userId,
+			status: 'active'
+		}).sort({ createdAt: -1 });
 
-    console.log(`📋 Found ${bookings.length} active bookings for conversation ${conversationId}`);
+		console.log(`📋 Found ${bookings.length} active bookings for conversation ${conversationId}`);
 
-    return {
-      bookings: bookings.map(booking => ({
-        id: booking._id,
-        eventId: booking.eventId,
-        summary: booking.summary,
-        start: booking.start,
-        end: booking.end,
-        attendees: booking.attendees,
-        createdAt: booking.createdAt
-      }))
-    };
-  } catch (error) {
-    console.error('Error listing user bookings:', error);
-    return { error: 'Failed to list bookings' };
-  }
+		return {
+			bookings: bookings.map(booking => ({
+				id: booking._id,
+				eventId: booking.eventId,
+				summary: booking.summary,
+				start: booking.start,
+				end: booking.end,
+				attendees: booking.attendees,
+				createdAt: booking.createdAt
+			}))
+		};
+	} catch (error) {
+		console.error('Error listing user bookings:', error);
+		return { error: 'Failed to list bookings' };
+	}
 }
 // OpenAI API Configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -749,16 +742,16 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 
 		// Generate proper date range for booking
 		const bookingDateRange = generateBookingDateRange();
-		
+
 		// Build messages array with conversation history
 		const messages = [
 			{
 				role: "system",
 				content:
 					`You are a customer support agent representing ${businessName}. ${businessInfo} so act and talk like a human.` +
-				"You are a helpful assistant that handles answers questions about the business in a human way and manage booking requests. Always use Friendly, warm, and professional tone. Miami vibe, relaxed but polished." +
-				`IMPORTANT: All booking times are in the business's local timezone. When showing times to users, present them in a natural, user-friendly format. ` +
-				`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. HANDLING AVAILABILITY RESULTS: After calling get_available_booking_slots, check the response carefully: - IF availableSlots array is EMPTY or has 0 slots: Tell the user "Unfortunately, there are no available time slots on [specified day]." DO NOT say "here are the available slots" when there are none. - IF availableSlots has slots: Present 3-5 available options to the user in a clear, easy-to-read format using bullet points. When presenting dates, ALWAYS use the exact 'dayName' field provided in the tool response (e.g., if the response shows dayName: \"Monday\" and date: \"2025-12-16\", present it as \"Monday, December 16, 2025\"). NEVER calculate or guess the day name yourself - always use the dayName from the response. DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user in bullet form: - Full name (required) - Email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool. ABSOLUTELY CRITICAL - DATETIME FORMAT: The get_available_booking_slots response contains BOTH 'startTime' and 'startDateTime' fields. YOU MUST IGNORE startTime and endTime fields completely. YOU MUST ONLY use the 'startDateTime' and 'endDateTime' fields which contain the complete timezone-aware datetime string. EXAMPLE: If get_available_booking_slots returns: {date: \"2025-12-29\", startTime: \"08:00\", endTime: \"09:00\", startDateTime: \"2025-12-29T08:00:00+05:00\", endDateTime: \"2025-12-29T09:00:00+05:00\"}, then call create_booking with: {start: \"2025-12-29T08:00:00+05:00\", end: \"2025-12-29T09:00:00+05:00\"}. CORRECT FORMAT: \"2025-12-29T08:00:00+05:00\" (copy startDateTime exactly). WRONG FORMATS: \"2025-12-29T08:00:00Z\", \"2025-12-29T08:00:00.000Z\", \"2025-12-29T08:00:00\" (DO NOT construct these). The startDateTime field already has the correct timezone - use it exactly as is. 6. CRITICAL: If create_booking returns an error (especially \"time slot is already booked\" or \"maximum capacity reached\"), do NOT claim the booking was successful. Instead: a) Apologize and explain the time is no longer available, b) Immediately call get_available_booking_slots again to get fresh availability, c) Offer 3-5 alternative time slots to the user. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
+					"You are a helpful assistant that handles answers questions about the business in a human way and manage booking requests. Always use Friendly, warm, and professional tone. Miami vibe, relaxed but polished." +
+					`IMPORTANT: All booking times are in the business's local timezone. When showing times to users, present them in a natural, user-friendly format. ` +
+					`BOOKING ASSISTANCE: If a user expresses interest in booking an appointment, scheduling a session, or making a reservation, follow these steps: 1. Use the get_available_booking_slots tool to retrieve available time slots for the next 7-14 days. Use the date range: startDate=${bookingDateRange.startDate}, endDate=${bookingDateRange.endDate}. IMPORTANT: Always use the current year (${new Date().getFullYear()}) when generating dates. 2. HANDLING AVAILABILITY RESULTS: After calling get_available_booking_slots, check the response carefully: - IF availableSlots array is EMPTY or has 0 slots: Tell the user "Unfortunately, there are no available time slots on [specified day]." DO NOT say "here are the available slots" when there are none. - IF availableSlots has slots: Present 3-5 available options to the user in a clear, easy-to-read format using bullet points. When presenting dates, ALWAYS use the exact 'dayName' field provided in the tool response (e.g., if the response shows dayName: \"Monday\" and date: \"2025-12-16\", present it as \"Monday, December 16, 2025\"). NEVER calculate or guess the day name yourself - always use the dayName from the response. DO NOT omit the day of the week under any circumstances. 3. BEFORE creating a booking, you MUST collect the following information from the user in bullet form: - Full name (required) - Email (required) - Purpose of the appointment (required) 4. Ask the user to confirm which time works best for them. 5. Once they confirm a specific time AND you have all required information, use the create_booking tool. ABSOLUTELY CRITICAL - DATETIME FORMAT: The get_available_booking_slots response contains BOTH 'startTime' and 'startDateTime' fields. YOU MUST IGNORE startTime and endTime fields completely. YOU MUST ONLY use the 'startDateTime' and 'endDateTime' fields which contain the complete timezone-aware datetime string. EXAMPLE: If get_available_booking_slots returns: {date: \"2025-12-29\", startTime: \"08:00\", endTime: \"09:00\", startDateTime: \"2025-12-29T08:00:00+05:00\", endDateTime: \"2025-12-29T09:00:00+05:00\"}, then call create_booking with: {start: \"2025-12-29T08:00:00+05:00\", end: \"2025-12-29T09:00:00+05:00\"}. CORRECT FORMAT: \"2025-12-29T08:00:00+05:00\" (copy startDateTime exactly). WRONG FORMATS: \"2025-12-29T08:00:00Z\", \"2025-12-29T08:00:00.000Z\", \"2025-12-29T08:00:00\" (DO NOT construct these). The startDateTime field already has the correct timezone - use it exactly as is. 6. CRITICAL: If create_booking returns an error (especially \"time slot is already booked\" or \"maximum capacity reached\"), do NOT claim the booking was successful. Instead: a) Apologize and explain the time is no longer available, b) Immediately call get_available_booking_slots again to get fresh availability, c) Offer 3-5 alternative time slots to the user. If any required information is missing, do NOT proceed with booking and instead ask the user to provide the missing details.
 
 CANCELLATION+ WORKFLOW - EXECUTE THIS STEP BY STEP:
 STEP 1: When user mentions cancelling a booking, FIRST call list_user_bookings tool to get their current bookings.
@@ -805,7 +798,7 @@ Always use the bullet point character (•) at the start of each line. This make
 If you don't have specific information about something in the provided business info or FAQs, try to build context from the conversation history and our services. If still nothing meaningful is found then respond ONLY with: 'I don't have that specific information right now. One of our team members will connect with you shortly to provide the details you need.'
 Do NOT provide ANY generic, assumed, or external information about addresses, or businesses.
 CONTEXT AWARENESS: You have access to the full conversation history. Use previous messages to maintain context and provide relevant responses. Reference earlier parts of the conversation when appropriate.` +
-						faqContent,
+					faqContent,
 			},
 		];
 
@@ -821,80 +814,80 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 
 		// Add current user message
 		messages.push({
-		  role: "user",
-		  content: userMessage,
+			role: "user",
+			content: userMessage,
 		});
 
 		// Function definitions for tool calls
 		const tools = [
-		  {
-		    type: "function",
-		    function: {
-		      name: "get_available_booking_slots",
-		      description: "Get available time slots for booking appointments with the business",
-		      parameters: {
-		        type: "object",
-		        properties: {
-		          startDate: { type: "string", description: "Start date in YYYY-MM-DD format" },
-		          endDate: { type: "string", description: "End date in YYYY-MM-DD format" }
-		        },
-		        required: ["startDate", "endDate"]
-		      }
-		    }
-		  },
-		  {
-		    type: "function",
-		    function: {
-		      name: "create_booking",
-		      description: "Create a new booking appointment on the calendar. CRITICAL: You must use the exact 'startDateTime' and 'endDateTime' values from get_available_booking_slots response. DO NOT use startTime/endTime, DO NOT construct datetime strings, DO NOT add 'Z' suffix. Copy startDateTime and endDateTime exactly as provided.",
-		      parameters: {
-		        type: "object",
-		        properties: {
-		          summary: { type: "string", description: "Booking title or service type" },
-		          start: { type: "string", description: "MUST be the exact 'startDateTime' value from get_available_booking_slots (e.g. '2025-12-29T08:00:00+05:00'). DO NOT construct from date+startTime. DO NOT use UTC/Z format." },
-		          end: { type: "string", description: "MUST be the exact 'endDateTime' value from get_available_booking_slots (e.g. '2025-12-29T09:00:00+05:00'). DO NOT construct from date+endTime. DO NOT use UTC/Z format." },
-		          description: { type: "string", description: "Additional details about the booking" },
-		          attendeeEmail: { type: "string", description: "Email of the person booking" },
-		          attendeeName: { type: "string", description: "Name of the person booking" }
-		        },
-		        required: ["summary", "start", "end"]
-		      }
-		    }
-		  },
-		  {
-		    type: "function",
-		    function: {
-		      name: "cancel_booking",
-		      description: "Cancel an existing booking appointment",
-		      parameters: {
-		        type: "object",
-		        properties: {
-		          eventId: { type: "string", description: "The Google Calendar event ID of the booking to cancel" }
-		        },
-		        required: ["eventId"]
-		      }
-		    }
-		  },
-		  {
-		    type: "function",
-		    function: {
-		      name: "list_user_bookings",
-		      description: "List all active bookings for the current conversation/user",
-		      parameters: {
-		        type: "object",
-		        properties: {},
-		        required: []
-		      }
-		    }
-		  }
+			{
+				type: "function",
+				function: {
+					name: "get_available_booking_slots",
+					description: "Get available time slots for booking appointments with the business",
+					parameters: {
+						type: "object",
+						properties: {
+							startDate: { type: "string", description: "Start date in YYYY-MM-DD format" },
+							endDate: { type: "string", description: "End date in YYYY-MM-DD format" }
+						},
+						required: ["startDate", "endDate"]
+					}
+				}
+			},
+			{
+				type: "function",
+				function: {
+					name: "create_booking",
+					description: "Create a new booking appointment on the calendar. CRITICAL: You must use the exact 'startDateTime' and 'endDateTime' values from get_available_booking_slots response. DO NOT use startTime/endTime, DO NOT construct datetime strings, DO NOT add 'Z' suffix. Copy startDateTime and endDateTime exactly as provided.",
+					parameters: {
+						type: "object",
+						properties: {
+							summary: { type: "string", description: "Booking title or service type" },
+							start: { type: "string", description: "MUST be the exact 'startDateTime' value from get_available_booking_slots (e.g. '2025-12-29T08:00:00+05:00'). DO NOT construct from date+startTime. DO NOT use UTC/Z format." },
+							end: { type: "string", description: "MUST be the exact 'endDateTime' value from get_available_booking_slots (e.g. '2025-12-29T09:00:00+05:00'). DO NOT construct from date+endTime. DO NOT use UTC/Z format." },
+							description: { type: "string", description: "Additional details about the booking" },
+							attendeeEmail: { type: "string", description: "Email of the person booking" },
+							attendeeName: { type: "string", description: "Name of the person booking" }
+						},
+						required: ["summary", "start", "end"]
+					}
+				}
+			},
+			{
+				type: "function",
+				function: {
+					name: "cancel_booking",
+					description: "Cancel an existing booking appointment",
+					parameters: {
+						type: "object",
+						properties: {
+							eventId: { type: "string", description: "The Google Calendar event ID of the booking to cancel" }
+						},
+						required: ["eventId"]
+					}
+				}
+			},
+			{
+				type: "function",
+				function: {
+					name: "list_user_bookings",
+					description: "List all active bookings for the current conversation/user",
+					parameters: {
+						type: "object",
+						properties: {},
+						required: []
+					}
+				}
+			}
 		];
 
 		// Function to make API call and handle responses
 		async function makeOpenAICall(msgs, toolCalls = null) {
 			const requestBody = {
-			  model: OPENAI_MODEL,
-			  messages: msgs,
-			  max_completion_tokens: 500,
+				model: OPENAI_MODEL,
+				messages: msgs,
+				max_completion_tokens: 500,
 			};
 
 
@@ -1059,6 +1052,23 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 		await conversation.addMessage('user', userMessage);
 		await conversation.addMessage('assistant', aiResponse);
 
+		// Check if this is a failed response and save to unanswered questions
+		if (isFailedResponse(aiResponse)) {
+			try {
+				const UnansweredQuestion = require('../models/UnansweredQuestion');
+				await UnansweredQuestion.create({
+					userId: user._id,
+					question: userMessage,
+					botResponse: aiResponse,
+					conversationId: conversation._id,
+					status: 'pending'
+				});
+				console.log('📝 Saved unanswered question to database');
+			} catch (err) {
+				console.error('❌ Error saving unanswered question:', err);
+			}
+		}
+
 		return aiResponse;
 	} catch (error) {
 		console.error(
@@ -1110,27 +1120,27 @@ async function sendInstagramMessage(
 		);
 		throw error;
 	}
-// Function to fetch Instagram user profile
-async function getInstagramUserProfile(userId, accessToken) {
-	try {
-		const response = await axios.get(
-			`https://graph.instagram.com/${userId}?fields=username&access_token=${accessToken}`
-		);
-		return {
-			username: response.data.username,
-			profilePicture: null // Profile pictures not available for IG Business scoped IDs
-		};
-	} catch (error) {
-		console.error(
-			"Instagram User Profile API Error:",
-			error.response?.data || error.message
-		);
-		return {
-			username: null,
-			profilePicture: null
-		};
+	// Function to fetch Instagram user profile
+	async function getInstagramUserProfile(userId, accessToken) {
+		try {
+			const response = await axios.get(
+				`https://graph.instagram.com/${userId}?fields=username&access_token=${accessToken}`
+			);
+			return {
+				username: response.data.username,
+				profilePicture: null // Profile pictures not available for IG Business scoped IDs
+			};
+		} catch (error) {
+			console.error(
+				"Instagram User Profile API Error:",
+				error.response?.data || error.message
+			);
+			return {
+				username: null,
+				profilePicture: null
+			};
+		}
 	}
-}
 }
 
 // Function to send WhatsApp message
@@ -1334,16 +1344,16 @@ app.post("/instagram", async function (req, res) {
 								return; // Skip processing
 							}
 
-						if (user && user.instagramAccessToken) {
-							// Get AI response with conversation context (pass 'instagram' as platform)
-							const aiResponse = await getOpenAIResponse(
-								userMessage,
-								senderId,
-								user._id,
-								'instagram'
-							);
+							if (user && user.instagramAccessToken) {
+								// Get AI response with conversation context (pass 'instagram' as platform)
+								const aiResponse = await getOpenAIResponse(
+									userMessage,
+									senderId,
+									user._id,
+									'instagram'
+								);
 
-							// Send reply to Instagram using user's token
+								// Send reply to Instagram using user's token
 								try {
 									console.log(`\n📤 Sending reply to Instagram...`);
 									await sendInstagramMessage(
@@ -1430,7 +1440,7 @@ app.post("/whatsapp", async function (req, res) {
 										if (
 											process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN &&
 											process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN !==
-												"your_whatsapp_access_token_here" &&
+											"your_whatsapp_access_token_here" &&
 											process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN.length > 50
 										) {
 											try {

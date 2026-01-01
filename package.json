@@ -20,7 +20,8 @@
 		"firebase": "^12.5.0",
 		"googleapis": "^168.0.0",
 		"jsonwebtoken": "^9.0.3",
-		"mongoose": "^8.8.3"
+		"mongoose": "^8.8.3",
+		"string-similarity": "^4.0.4"
 	},
 	"engines": {
 		"node": "20.x"

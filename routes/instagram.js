@@ -3,6 +3,7 @@ const axios = require('axios');
 const User = require('../models/User');
 const Conversation = require('../models/Conversation');
 const auth = require('../middleware/auth');
+const { ensureDBConnection } = require('../utils/db');
 
 const router = express.Router();
 
@@ -29,7 +30,7 @@ async function getInstagramUserProfile(userId, accessToken) {
 }
 
 // Get user's recent Instagram conversations from database
-router.get('/conversations', auth, async (req, res) => {
+router.get('/conversations', ensureDBConnection, auth, async (req, res) => {
   console.log('🔥 INSTAGRAM CONVERSATIONS ENDPOINT HIT!');
   console.log('User ID from token:', req.user?.userId);
 
@@ -83,7 +84,7 @@ router.get('/conversations', auth, async (req, res) => {
 });
 
 // Get messages for a specific conversation from database
-router.get('/conversations/:conversationId/messages', auth, async (req, res) => {
+router.get('/conversations/:conversationId/messages', ensureDBConnection, auth, async (req, res) => {
   console.log('🔥 INSTAGRAM MESSAGES ENDPOINT HIT!');
   console.log('Conversation ID:', req.params.conversationId);
   console.log('User ID from token:', req.user?.userId);
