@@ -50,6 +50,176 @@ router.get("/extraction-status", ensureDBConnection, auth, async (req, res) => {
 	}
 });
 
+// ========== UNANSWERED QUESTIONS ENDPOINTS ==========
+
+// Get all unanswered questions for the authenticated user
+router.get("/unanswered", ensureDBConnection, auth, async (req, res) => {
+	try {
+		console.log("📋 Fetching unanswered questions for user:", req.user.userId);
+		const { status } = req.query;
+
+		const query = { userId: req.user.userId };
+		if (status && ["pending", "resolved"].includes(status)) {
+			query.status = status;
+		}
+
+		console.log("🔍 Query:", JSON.stringify(query));
+
+		const unansweredQuestions = await UnansweredQuestion.find(query)
+			.sort({ createdAt: -1 })
+			.populate({
+				path: "resolvedByFaqId",
+				select: "question answer",
+				options: { strictPopulate: false },
+			})
+			.lean();
+
+		console.log(`✅ Found ${unansweredQuestions.length} unanswered questions`);
+
+		res.json({
+			unansweredQuestions,
+			total: unansweredQuestions.length,
+		});
+	} catch (error) {
+		console.error("❌ Get unanswered questions error:", error);
+		console.error("Error stack:", error.stack);
+		res.status(500).json({
+			message: "Failed to fetch unanswered questions.",
+			error: error.message,
+		});
+	}
+});
+
+// Manually resolve an unanswered question
+router.put(
+	"/unanswered/:id/resolve",
+	ensureDBConnection,
+	auth,
+	async (req, res) => {
+		try {
+			const unansweredQuestion = await UnansweredQuestion.findOneAndUpdate(
+				{
+					_id: req.params.id,
+					userId: req.user.userId,
+				},
+				{
+					$set: {
+						status: "resolved",
+						resolvedAt: new Date(),
+					},
+				},
+				{ new: true }
+			);
+
+			if (!unansweredQuestion) {
+				return res
+					.status(404)
+					.json({ message: "Unanswered question not found." });
+			}
+
+			res.json({
+				message: "Question marked as resolved.",
+				unansweredQuestion,
+			});
+		} catch (error) {
+			console.error("Resolve unanswered question error:", error);
+			res.status(500).json({
+				message: "Failed to resolve question.",
+			});
+		}
+	}
+);
+
+// Convert an unanswered question to FAQ
+router.post(
+	"/unanswered/:id/convert",
+	ensureDBConnection,
+	auth,
+	async (req, res) => {
+		try {
+			const { answer } = req.body;
+
+			if (!answer) {
+				return res.status(400).json({
+					message: "Answer is required to convert to FAQ.",
+				});
+			}
+
+			// Find the unanswered question
+			const unansweredQuestion = await UnansweredQuestion.findOne({
+				_id: req.params.id,
+				userId: req.user.userId,
+			});
+
+			if (!unansweredQuestion) {
+				return res
+					.status(404)
+					.json({ message: "Unanswered question not found." });
+			}
+
+			// Create FAQ from unanswered question
+			const faq = new FAQ({
+				question: unansweredQuestion.question.trim(),
+				answer: answer.trim(),
+				user: req.user.userId,
+			});
+
+			await faq.save();
+
+			// Auto-resolve similar unanswered questions
+			let autoResolvedCount = 0;
+			try {
+				const pendingQuestions = await UnansweredQuestion.find({
+					userId: req.user.userId,
+					status: "pending",
+				}).lean();
+
+				if (pendingQuestions.length > 0) {
+					const similarQuestions = findSimilarQuestions(
+						unansweredQuestion.question.trim(),
+						pendingQuestions,
+						0.65
+					);
+
+					if (similarQuestions.length > 0) {
+						const questionIds = similarQuestions.map((q) => q._id);
+						const updateResult = await UnansweredQuestion.updateMany(
+							{ _id: { $in: questionIds } },
+							{
+								$set: {
+									status: "resolved",
+									resolvedAt: new Date(),
+									resolvedByFaqId: faq._id,
+								},
+							}
+						);
+
+						autoResolvedCount = updateResult.modifiedCount || 0;
+						console.log(
+							`✅ Auto-resolved ${autoResolvedCount} similar unanswered questions`
+						);
+					}
+				}
+			} catch (autoResolveError) {
+				console.error("❌ Error in auto-resolution:", autoResolveError);
+			}
+
+			res.status(201).json({
+				message: "FAQ created successfully from unanswered question.",
+				faq,
+				autoResolvedCount,
+			});
+		} catch (error) {
+			console.error("Convert unanswered to FAQ error:", error);
+			res.status(500).json({
+				message: "Failed to convert question to FAQ.",
+			});
+		}
+	}
+);
+
+// ========== FAQ ENDPOINTS ==========
+
 // Get all FAQs for the authenticated user
 router.get("/", ensureDBConnection, auth, async (req, res) => {
 	try {
@@ -434,173 +604,5 @@ router.post("/update-status", ensureDBConnection, async (req, res) => {
 		});
 	}
 });
-
-// ========== UNANSWERED QUESTIONS ENDPOINTS ==========
-
-// Get all unanswered questions for the authenticated user
-router.get("/unanswered", ensureDBConnection, auth, async (req, res) => {
-	try {
-		console.log("📋 Fetching unanswered questions for user:", req.user.userId);
-		const { status } = req.query;
-
-		const query = { userId: req.user.userId };
-		if (status && ["pending", "resolved"].includes(status)) {
-			query.status = status;
-		}
-
-		console.log("🔍 Query:", JSON.stringify(query));
-
-		const unansweredQuestions = await UnansweredQuestion.find(query)
-			.sort({ createdAt: -1 })
-			.populate({
-				path: "resolvedByFaqId",
-				select: "question answer",
-				options: { strictPopulate: false },
-			})
-			.lean();
-
-		console.log(`✅ Found ${unansweredQuestions.length} unanswered questions`);
-
-		res.json({
-			unansweredQuestions,
-			total: unansweredQuestions.length,
-		});
-	} catch (error) {
-		console.error("❌ Get unanswered questions error:", error);
-		console.error("Error stack:", error.stack);
-		res.status(500).json({
-			message: "Failed to fetch unanswered questions.",
-			error: error.message,
-		});
-	}
-});
-
-// Manually resolve an unanswered question
-router.put(
-	"/unanswered/:id/resolve",
-	ensureDBConnection,
-	auth,
-	async (req, res) => {
-		try {
-			const unansweredQuestion = await UnansweredQuestion.findOneAndUpdate(
-				{
-					_id: req.params.id,
-					userId: req.user.userId,
-				},
-				{
-					$set: {
-						status: "resolved",
-						resolvedAt: new Date(),
-					},
-				},
-				{ new: true }
-			);
-
-			if (!unansweredQuestion) {
-				return res
-					.status(404)
-					.json({ message: "Unanswered question not found." });
-			}
-
-			res.json({
-				message: "Question marked as resolved.",
-				unansweredQuestion,
-			});
-		} catch (error) {
-			console.error("Resolve unanswered question error:", error);
-			res.status(500).json({
-				message: "Failed to resolve question.",
-			});
-		}
-	}
-);
-
-// Convert an unanswered question to FAQ
-router.post(
-	"/unanswered/:id/convert",
-	ensureDBConnection,
-	auth,
-	async (req, res) => {
-		try {
-			const { answer } = req.body;
-
-			if (!answer) {
-				return res.status(400).json({
-					message: "Answer is required to convert to FAQ.",
-				});
-			}
-
-			// Find the unanswered question
-			const unansweredQuestion = await UnansweredQuestion.findOne({
-				_id: req.params.id,
-				userId: req.user.userId,
-			});
-
-			if (!unansweredQuestion) {
-				return res
-					.status(404)
-					.json({ message: "Unanswered question not found." });
-			}
-
-			// Create FAQ from unanswered question
-			const faq = new FAQ({
-				question: unansweredQuestion.question.trim(),
-				answer: answer.trim(),
-				user: req.user.userId,
-			});
-
-			await faq.save();
-
-			// Auto-resolve similar unanswered questions
-			let autoResolvedCount = 0;
-			try {
-				const pendingQuestions = await UnansweredQuestion.find({
-					userId: req.user.userId,
-					status: "pending",
-				}).lean();
-
-				if (pendingQuestions.length > 0) {
-					const similarQuestions = findSimilarQuestions(
-						unansweredQuestion.question.trim(),
-						pendingQuestions,
-						0.65
-					);
-
-					if (similarQuestions.length > 0) {
-						const questionIds = similarQuestions.map((q) => q._id);
-						const updateResult = await UnansweredQuestion.updateMany(
-							{ _id: { $in: questionIds } },
-							{
-								$set: {
-									status: "resolved",
-									resolvedAt: new Date(),
-									resolvedByFaqId: faq._id,
-								},
-							}
-						);
-
-						autoResolvedCount = updateResult.modifiedCount || 0;
-						console.log(
-							`✅ Auto-resolved ${autoResolvedCount} similar unanswered questions`
-						);
-					}
-				}
-			} catch (autoResolveError) {
-				console.error("❌ Error in auto-resolution:", autoResolveError);
-			}
-
-			res.status(201).json({
-				message: "FAQ created successfully from unanswered question.",
-				faq,
-				autoResolvedCount,
-			});
-		} catch (error) {
-			console.error("Convert unanswered to FAQ error:", error);
-			res.status(500).json({
-				message: "Failed to convert question to FAQ.",
-			});
-		}
-	}
-);
 
 module.exports = router;
