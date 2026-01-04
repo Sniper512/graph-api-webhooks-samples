@@ -15,6 +15,10 @@ const cors = require("cors");
 const xhub = require("express-x-hub");
 const axios = require("axios");
 const { connectDB } = require("../utils/db");
+const {
+	sendBookingConfirmation,
+	sendBookingCancellation,
+} = require("../utils/emailService");
 
 // Import routes
 const authRoutes = require("../routes/auth");
@@ -689,11 +693,12 @@ async function createBooking(
 			}
 		};
 
-		const bookingTitle = businessInfo && businessInfo.businessName 
-			? `Booking with ${businessInfo.businessName} : ${summary}`
-			: `Booking: ${summary}`;
+		const bookingTitle =
+			businessInfo && businessInfo.businessName
+				? `Booking with ${businessInfo.businessName} : ${summary}`
+				: `Booking: ${summary}`;
 
-		const bookingDescription = description 
+		const bookingDescription = description
 			? `${description}\n\nMeeting was booked with "ginivo.ai"`
 			: 'Meeting was booked with "ginivo.ai"';
 
@@ -752,6 +757,37 @@ async function createBooking(
 			`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`
 		);
 
+		// Send booking confirmation email
+		if (attendeeEmail) {
+			try {
+				const emailResult = await sendBookingConfirmation({
+					customerEmail: attendeeEmail,
+					customerName: attendeeName,
+					businessName:
+						businessInfo?.businessName || user.businessName || "Our Business",
+					bookingTitle: summary,
+					bookingDescription: description,
+					startDateTime: start,
+					endDateTime: end,
+					timezone: timezone,
+				});
+
+				if (emailResult.success) {
+					console.log(`✅ Booking confirmation email sent to ${attendeeEmail}`);
+				} else {
+					console.error(
+						`⚠️ Failed to send booking confirmation email: ${emailResult.error}`
+					);
+				}
+			} catch (emailError) {
+				console.error(
+					`⚠️ Error sending booking confirmation email:`,
+					emailError
+				);
+				// Don't fail the booking if email fails
+			}
+		}
+
 		return {
 			eventId: response.data.id,
 			bookingId: booking._id,
@@ -766,10 +802,16 @@ async function cancelBooking(userId, eventId) {
 	try {
 		const User = require("../models/User");
 		const Booking = require("../models/Booking");
+		const Business = require("../models/Business");
+
 		const user = await User.findById(userId);
 		if (!user || user.googleCalendarIntegrationStatus !== "connected") {
 			return { error: "Google Calendar not connected" };
 		}
+
+		// Get booking details before deletion for email notification
+		const booking = await Booking.findOne({ eventId, userId });
+
 		const accessToken = await refreshAccessTokenIfNeeded(user);
 		const oauth2Client = new google.auth.OAuth2(
 			process.env.GOOGLE_CALENDAR_CLIENT_ID,
@@ -786,10 +828,44 @@ async function cancelBooking(userId, eventId) {
 		});
 
 		// Delete booking from database
-		const booking = await Booking.findOneAndDelete({ eventId, userId });
+		const deletedBooking = await Booking.findOneAndDelete({ eventId, userId });
 
-		if (booking) {
-			console.log(`💾 Booking deleted from database: ${booking._id}`);
+		if (deletedBooking) {
+			console.log(`💾 Booking deleted from database: ${deletedBooking._id}`);
+
+			// Send cancellation email if attendee exists
+			if (booking && booking.attendees && booking.attendees.length > 0) {
+				const attendee = booking.attendees[0];
+				if (attendee.email) {
+					try {
+						const businessInfo = await Business.findOne({ user: userId });
+						const emailResult = await sendBookingCancellation({
+							customerEmail: attendee.email,
+							customerName: attendee.displayName,
+							businessName:
+								businessInfo?.businessName ||
+								user.businessName ||
+								"Our Business",
+							bookingTitle: booking.summary,
+							startDateTime: booking.start.dateTime,
+							timezone: booking.start.timeZone || "UTC",
+						});
+
+						if (emailResult.success) {
+							console.log(
+								`✅ Booking cancellation email sent to ${attendee.email}`
+							);
+						} else {
+							console.error(
+								`⚠️ Failed to send cancellation email: ${emailResult.error}`
+							);
+						}
+					} catch (emailError) {
+						console.error(`⚠️ Error sending cancellation email:`, emailError);
+						// Don't fail the cancellation if email fails
+					}
+				}
+			}
 		}
 
 		return { eventId, status: "cancelled" };
