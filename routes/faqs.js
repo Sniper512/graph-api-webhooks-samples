@@ -170,7 +170,35 @@ router.put(
 		}
 	}
 );
+// Delete an unanswered question
+router.delete(
+	"/unanswered/:id",
+	ensureDBConnection,
+	auth,
+	async (req, res) => {
+		try {
+			const unansweredQuestion = await UnansweredQuestion.findOneAndDelete({
+				_id: req.params.id,
+				userId: req.user.userId,
+			});
 
+			if (!unansweredQuestion) {
+				return res
+					.status(404)
+					.json({ message: "Unanswered question not found." });
+			}
+
+			res.json({
+				message: "Question deleted successfully.",
+			});
+		} catch (error) {
+			console.error("Delete unanswered question error:", error);
+			res.status(500).json({
+				message: "Failed to delete question.",
+			});
+		}
+	}
+);
 // Convert an unanswered question to FAQ
 router.post(
 	"/unanswered/:id/convert",
