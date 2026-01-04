@@ -34,9 +34,6 @@ const Conversation = require("../models/Conversation");
 const UnansweredQuestion = require("../models/UnansweredQuestion");
 const { google } = require("googleapis");
 
-// Import utilities
-const { isFailedResponse } = require("../utils/similarity");
-
 const app = express();
 
 app.set("port", process.env.PORT || 5000);
@@ -984,7 +981,16 @@ async function getOpenAIResponse(
 			{
 				role: "system",
 				content:
-					`You are a real customer support team member for ${businessName}.` +
+					`IMPORTANT RESPONSE FORMAT:
+At the very end of your response, after your message to the user, add a classification on a new line:
+[CLASSIFICATION: ANSWERED] if you successfully provided helpful information
+[CLASSIFICATION: UNANSWERED] if you declined, refused, redirected to business topics, or couldn't help
+
+This classification line will be parsed and removed before sending to the user.
+
+---
+
+You are a real customer support team member for ${businessName}.` +
 					"You chat with customers the way people talk on Instagram or WhatsApp in real life." +
 					`VOICE & STYLE:
 - Sound natural, relaxed, and human
@@ -1429,22 +1435,45 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 
 		// Get final response
 		const finalChoice = response.choices[0];
-		aiResponse =
+		let rawResponse =
 			finalChoice.message.content || "I'm not sure how to respond to that.";
+
+		// Parse classification from response
+		let isUnanswered = false;
+		const classificationMatch = rawResponse.match(
+			/\[CLASSIFICATION:\s*(ANSWERED|UNANSWERED)\]/i
+		);
+
+		if (classificationMatch) {
+			isUnanswered = classificationMatch[1].toUpperCase() === "UNANSWERED";
+			// Remove classification line from response before showing to user
+			aiResponse = rawResponse
+				.replace(/\[CLASSIFICATION:\s*(ANSWERED|UNANSWERED)\]\s*/gi, "")
+				.trim();
+			console.log(
+				`🔍 Classification extracted: ${
+					isUnanswered ? "UNANSWERED" : "ANSWERED"
+				}`
+			);
+		} else {
+			// Fallback: if no classification found, assume answered
+			aiResponse = rawResponse;
+			console.log(`⚠️ No classification found in response, assuming ANSWERED`);
+		}
 
 		console.log(`\n✅ Final OpenAI Response:\n${aiResponse}\n`);
 		console.log(`📊 Response metadata:`, {
 			finish_reason: finalChoice.finish_reason,
 			has_tool_calls: !!finalChoice.message.tool_calls,
 			content_length: aiResponse.length,
+			is_unanswered: isUnanswered,
 		});
 
 		// Save both messages to database
 		await conversation.addMessage("user", userMessage);
 		await conversation.addMessage("assistant", aiResponse);
 
-		// Check if this is a failed response and save to unanswered questions
-		const isUnanswered = await isFailedResponse(userMessage, aiResponse);
+		// Save to unanswered questions if classified as such
 		if (isUnanswered) {
 			try {
 				const UnansweredQuestion = require("../models/UnansweredQuestion");
@@ -1455,7 +1484,9 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 					conversationId: conversation._id,
 					status: "pending",
 				});
-				console.log("📝 Saved unanswered question to database");
+				console.log(
+					"📝 Saved unanswered question to database (from inline classification)"
+				);
 			} catch (err) {
 				console.error("❌ Error saving unanswered question:", err);
 			}
