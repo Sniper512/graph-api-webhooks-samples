@@ -1360,7 +1360,8 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 		await conversation.addMessage("assistant", aiResponse);
 
 		// Check if this is a failed response and save to unanswered questions
-		if (isFailedResponse(aiResponse)) {
+		const isUnanswered = await isFailedResponse(userMessage, aiResponse);
+		if (isUnanswered) {
 			try {
 				const UnansweredQuestion = require("../models/UnansweredQuestion");
 				await UnansweredQuestion.create({
