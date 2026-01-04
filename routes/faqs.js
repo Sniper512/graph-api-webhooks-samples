@@ -130,6 +130,47 @@ router.put(
 	}
 );
 
+// Mark an unanswered question as pending
+router.put(
+	"/unanswered/:id/unresolve",
+	ensureDBConnection,
+	auth,
+	async (req, res) => {
+		try {
+			const unansweredQuestion = await UnansweredQuestion.findOneAndUpdate(
+				{
+					_id: req.params.id,
+					userId: req.user.userId,
+				},
+				{
+					$set: {
+						status: "pending",
+						resolvedAt: null,
+						resolvedByFaqId: null,
+					},
+				},
+				{ new: true }
+			);
+
+			if (!unansweredQuestion) {
+				return res
+					.status(404)
+					.json({ message: "Unanswered question not found." });
+			}
+
+			res.json({
+				message: "Question marked as pending.",
+				unansweredQuestion,
+			});
+		} catch (error) {
+			console.error("Unresolve unanswered question error:", error);
+			res.status(500).json({
+				message: "Failed to mark question as pending.",
+			});
+		}
+	}
+);
+
 // Convert an unanswered question to FAQ
 router.post(
 	"/unanswered/:id/convert",
