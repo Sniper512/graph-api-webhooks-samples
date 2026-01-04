@@ -28,7 +28,7 @@ const googleCalendarRoutes = require("../routes/googleCalendar");
 // Import models
 const Conversation = require("../models/Conversation");
 const UnansweredQuestion = require("../models/UnansweredQuestion");
-const { google } = require('googleapis');
+const { google } = require("googleapis");
 
 // Import utilities
 const { isFailedResponse } = require("../utils/similarity");
@@ -44,12 +44,12 @@ app.listen(app.get("port"));
 
 // CORS configuration - allow multiple origins
 const allowedOrigins = [
-	process.env.FRONTEND_URL_LOCAL || 'http://localhost:5173',
-	process.env.FRONTEND_URL_DEV || 'http://localhost:3000',
-	'https://meta-user-dashboard.vercel.app',
-	'https://meta-app-admin-dashboard.vercel.app',
+	process.env.FRONTEND_URL_LOCAL || "http://localhost:5173",
+	process.env.FRONTEND_URL_DEV || "http://localhost:3000",
+	"https://meta-user-dashboard.vercel.app",
+	"https://meta-app-admin-dashboard.vercel.app",
 	process.env.FRONTEND_URL,
-	process.env.ADMIN_FRONTEND_URL
+	process.env.ADMIN_FRONTEND_URL,
 ].filter(Boolean);
 
 app.use(
@@ -58,7 +58,10 @@ app.use(
 			// Allow requests with no origin (mobile apps, Postman, etc.)
 			if (!origin) return callback(null, true);
 
-			if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+			if (
+				allowedOrigins.indexOf(origin) !== -1 ||
+				process.env.NODE_ENV === "development"
+			) {
 				callback(null, true);
 			} else {
 				callback(null, true); // Allow all origins for now
@@ -72,17 +75,18 @@ app.use(
 
 app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
 
-
 app.use(bodyParser.json());
 
 // Session middleware for storing temporary data
-const session = require('express-session');
-app.use(session({
-	secret: process.env.APP_SECRET || 'your_session_secret',
-	resave: false,
-	saveUninitialized: true,
-	cookie: { secure: false } // Set to true if using HTTPS
-}));
+const session = require("express-session");
+app.use(
+	session({
+		secret: process.env.APP_SECRET || "your_session_secret",
+		resave: false,
+		saveUninitialized: true,
+		cookie: { secure: false }, // Set to true if using HTTPS
+	})
+);
 
 // Mount auth routes
 app.use("/api/auth", authRoutes);
@@ -111,10 +115,19 @@ var received_updates = [];
 // Tool functions for booking
 const getGoogleCalendarRedirectUri = () => {
 	// Check if we're in production
-	if (process.env.NODE_ENV === 'production' || process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD) {
-		return process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+	if (
+		process.env.NODE_ENV === "production" ||
+		process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD
+	) {
+		return (
+			process.env.GOOGLE_CALENDAR_REDIRECT_URI_PROD ||
+			process.env.GOOGLE_CALENDAR_REDIRECT_URI
+		);
 	}
-	return process.env.GOOGLE_CALENDAR_REDIRECT_URI_LOCAL || process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+	return (
+		process.env.GOOGLE_CALENDAR_REDIRECT_URI_LOCAL ||
+		process.env.GOOGLE_CALENDAR_REDIRECT_URI
+	);
 };
 
 async function refreshAccessTokenIfNeeded(user) {
@@ -126,20 +139,27 @@ async function refreshAccessTokenIfNeeded(user) {
 				process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
 				getGoogleCalendarRedirectUri()
 			);
-			oauth2Client.setCredentials({ refresh_token: user.googleCalendarRefreshToken });
+			oauth2Client.setCredentials({
+				refresh_token: user.googleCalendarRefreshToken,
+			});
 			const { credentials } = await oauth2Client.refreshAccessToken();
 			user.googleCalendarAccessToken = credentials.access_token;
 			user.googleCalendarTokenExpiry = new Date(credentials.expiry_date);
 			await user.save();
 		} catch (error) {
-			console.error('❌ Failed to refresh Google Calendar access token:', error);
+			console.error(
+				"❌ Failed to refresh Google Calendar access token:",
+				error
+			);
 			// Mark integration as disconnected if refresh fails
-			user.googleCalendarIntegrationStatus = 'disconnected';
+			user.googleCalendarIntegrationStatus = "disconnected";
 			user.googleCalendarAccessToken = null;
 			user.googleCalendarRefreshToken = null;
 			user.googleCalendarTokenExpiry = null;
 			await user.save();
-			throw new Error('Google Calendar authentication expired. Please reconnect.');
+			throw new Error(
+				"Google Calendar authentication expired. Please reconnect."
+			);
 		}
 	}
 	return user.googleCalendarAccessToken;
@@ -154,38 +174,46 @@ function generateBookingDateRange() {
 
 	const formatISODate = (date) => {
 		const year = date.getFullYear();
-		const month = String(date.getMonth() + 1).padStart(2, '0');
-		const day = String(date.getDate()).padStart(2, '0');
+		const month = String(date.getMonth() + 1).padStart(2, "0");
+		const day = String(date.getDate()).padStart(2, "0");
 		return `${year}-${month}-${day}`;
 	};
 
 	return {
 		startDate: formatISODate(startDate),
-		endDate: formatISODate(endDate)
+		endDate: formatISODate(endDate),
 	};
 }
 async function getAvailableBookingSlots(userId, startDate, endDate) {
 	try {
-		console.log(`🔍 Getting available slots for user ${userId}, dates: ${startDate} to ${endDate}`);
+		console.log(
+			`🔍 Getting available slots for user ${userId}, dates: ${startDate} to ${endDate}`
+		);
 		const Business = require("../models/Business");
 		const business = await Business.findOne({ user: userId });
 		console.log(`🏢 Business found:`, !!business);
 		if (!business) return { availableSlots: [] };
 
 		const TimeSlot = require("../models/TimeSlot");
-		const timeSlots = await TimeSlot.find({ business: business._id, isActive: true });
+		const timeSlots = await TimeSlot.find({
+			business: business._id,
+			isActive: true,
+		});
 		console.log(`⏰ Time slots found: ${timeSlots.length}`);
 
 		const User = require("../models/User");
 		const user = await User.findById(userId);
-		console.log(`👤 User Google Calendar status:`, user?.googleCalendarIntegrationStatus);
+		console.log(
+			`👤 User Google Calendar status:`,
+			user?.googleCalendarIntegrationStatus
+		);
 
 		// Get business timezone early for Google Calendar queries
-		const businessTimezone = business.timezone || 'UTC';
+		const businessTimezone = business.timezone || "UTC";
 		console.log(`🌍 Business timezone: ${businessTimezone}`);
 
 		let bookings = [];
-		if (user && user.googleCalendarIntegrationStatus === 'connected') {
+		if (user && user.googleCalendarIntegrationStatus === "connected") {
 			console.log(`📅 Fetching existing bookings from Google Calendar...`);
 			const accessToken = await refreshAccessTokenIfNeeded(user);
 			const oauth2Client = new google.auth.OAuth2(
@@ -194,40 +222,41 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 				process.env.GOOGLE_CALENDAR_REDIRECT_URI
 			);
 			oauth2Client.setCredentials({ access_token: accessToken });
-			const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+			const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
 			// Query Google Calendar using business timezone
 			// Get midnight of start date and end of end date in business timezone
-			const startDateObj = new Date(startDate + 'T00:00:00');
-			const endDateObj = new Date(endDate + 'T23:59:59');
+			const startDateObj = new Date(startDate + "T00:00:00");
+			const endDateObj = new Date(endDate + "T23:59:59");
 
 			// Format as ISO strings (Google Calendar handles timezone conversion)
 			const timeMin = startDateObj.toISOString();
 			const timeMax = endDateObj.toISOString();
-			console.log(`📅 Calendar query range: ${timeMin} to ${timeMax} (${businessTimezone})`);
+			console.log(
+				`📅 Calendar query range: ${timeMin} to ${timeMax} (${businessTimezone})`
+			);
 
 			const response = await calendar.events.list({
-				calendarId: 'primary',
+				calendarId: "primary",
 				timeMin,
 				timeMax,
 				singleEvents: true,
-				orderBy: 'startTime'
+				orderBy: "startTime",
 			});
-			bookings = response.data.items.filter(event => {
-				const summary = (event.summary || '').toLowerCase();
-				const description = (event.description || '').toLowerCase();
-				return summary.includes('booking') || description.includes('booking');
+			bookings = response.data.items.filter((event) => {
+				const summary = (event.summary || "").toLowerCase();
+				const description = (event.description || "").toLowerCase();
+				return summary.includes("booking") || description.includes("booking");
 			});
 			console.log(`📅 Existing bookings found: ${bookings.length}`);
 		}
-
 
 		console.log(`🔄 Calculating available slots...`);
 		const availableSlots = [];
 
 		// Helper function to convert time string to minutes
 		const timeToMinutes = (timeStr) => {
-			const [hours, minutes] = timeStr.split(':').map(Number);
+			const [hours, minutes] = timeStr.split(":").map(Number);
 			return hours * 60 + minutes;
 		};
 
@@ -235,61 +264,75 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 		const minutesToTime = (minutes) => {
 			const hours = Math.floor(minutes / 60);
 			const mins = minutes % 60;
-			return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+			return `${String(hours).padStart(2, "0")}:${String(mins).padStart(
+				2,
+				"0"
+			)}`;
 		};
 
 		// Helper to get timezone offset (e.g., "+05:00")
 		const getTzOffset = (date) => {
 			try {
-				const str = date.toLocaleString('en-US', { timeZone: businessTimezone, timeZoneName: 'longOffset' });
+				const str = date.toLocaleString("en-US", {
+					timeZone: businessTimezone,
+					timeZoneName: "longOffset",
+				});
 				const match = str.match(/GMT([+-]\d{2}):?(\d{2})/);
 				if (match) {
 					return `${match[1]}:${match[2]}`;
 				}
-				return '+00:00';
+				return "+00:00";
 			} catch (e) {
-				console.error('Error getting timezone offset:', e);
-				return '+00:00';
+				console.error("Error getting timezone offset:", e);
+				return "+00:00";
 			}
 		};
 
 		// Parse start and end dates properly in business timezone
-		const start = new Date(startDate + 'T00:00:00');
-		const end = new Date(endDate + 'T23:59:59');
+		const start = new Date(startDate + "T00:00:00");
+		const end = new Date(endDate + "T23:59:59");
 
 		for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
 			// Get the date string in YYYY-MM-DD format
-			const dateStr = d.toISOString().split('T')[0];
+			const dateStr = d.toISOString().split("T")[0];
 
 			// Get day of week in business timezone (CRITICAL FIX)
-			const dateInBusinessTz = new Date(dateStr + 'T12:00:00'); // Use noon to avoid DST edge cases
-			const dayName = dateInBusinessTz.toLocaleDateString('en-US', {
+			const dateInBusinessTz = new Date(dateStr + "T12:00:00"); // Use noon to avoid DST edge cases
+			const dayName = dateInBusinessTz.toLocaleDateString("en-US", {
 				timeZone: businessTimezone,
-				weekday: 'long'
+				weekday: "long",
 			});
-			const dayOfWeek = dateInBusinessTz.toLocaleDateString('en-US', {
+			const dayOfWeek = dateInBusinessTz.toLocaleDateString("en-US", {
 				timeZone: businessTimezone,
-				weekday: 'short'
+				weekday: "short",
 			});
 
 			// Convert day name to number (0=Sunday, 1=Monday, etc.)
-			const dayMap = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };
+			const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 			const dayOfWeekNum = dayMap[dayOfWeek];
-			const daySlots = timeSlots.filter(ts => ts.dayOfWeek === dayOfWeekNum);
-			console.log(`📅 Day ${dateStr} (${dayName}): ${daySlots.length} time slots configured`);
+			const daySlots = timeSlots.filter((ts) => ts.dayOfWeek === dayOfWeekNum);
+			console.log(
+				`📅 Day ${dateStr} (${dayName}): ${daySlots.length} time slots configured`
+			);
 
 			if (daySlots.length === 0) continue;
 
 			for (const ts of daySlots) {
-				console.log(`  ⏰ TimeSlot ID ${ts._id}: ${ts.slots.length} slot configurations`);
+				console.log(
+					`  ⏰ TimeSlot ID ${ts._id}: ${ts.slots.length} slot configurations`
+				);
 
 				for (const slot of ts.slots) {
 					if (!slot.isActive) {
-						console.log(`    ❌ Slot ${slot.startTime}-${slot.endTime} is inactive`);
+						console.log(
+							`    ❌ Slot ${slot.startTime}-${slot.endTime} is inactive`
+						);
 						continue;
 					}
 
-					console.log(`    ✅ Slot ${slot.startTime}-${slot.endTime} (${slot.duration}min, max ${slot.maxBookings} bookings) is active`);
+					console.log(
+						`    ✅ Slot ${slot.startTime}-${slot.endTime} (${slot.duration}min, max ${slot.maxBookings} bookings) is active`
+					);
 
 					// Generate individual appointment slots based on duration
 					const startMinutes = timeToMinutes(slot.startTime);
@@ -297,10 +340,16 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 					const duration = slot.duration;
 					const maxBookings = slot.maxBookings || 1;
 
-					console.log(`      🔄 Generating individual ${duration}-minute appointment slots...`);
+					console.log(
+						`      🔄 Generating individual ${duration}-minute appointment slots...`
+					);
 
 					// Create individual appointment slots (e.g., 9:00-9:30, 9:30-10:00, etc.)
-					for (let currentMinutes = startMinutes; currentMinutes + duration <= endMinutes; currentMinutes += duration) {
+					for (
+						let currentMinutes = startMinutes;
+						currentMinutes + duration <= endMinutes;
+						currentMinutes += duration
+					) {
 						const offset = getTzOffset(dateInBusinessTz);
 						const appointmentStartTime = minutesToTime(currentMinutes);
 						const appointmentEndTime = minutesToTime(currentMinutes + duration);
@@ -317,20 +366,28 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 						// Count bookings that overlap with THIS specific appointment slot
 						let bookingsInAppointment = 0;
 						for (const booking of bookings) {
-							const bStart = new Date(booking.start.dateTime || booking.start.date);
+							const bStart = new Date(
+								booking.start.dateTime || booking.start.date
+							);
 							const bEnd = new Date(booking.end.dateTime || booking.end.date);
 
 							// Check if booking overlaps with this specific appointment time
 							if (appointmentStart < bEnd && appointmentEnd > bStart) {
 								bookingsInAppointment++;
-								console.log(`        📊 Overlap found: ${booking.summary} (${bStart.toISOString()} - ${bEnd.toISOString()})`);
+								console.log(
+									`        📊 Overlap found: ${
+										booking.summary
+									} (${bStart.toISOString()} - ${bEnd.toISOString()})`
+								);
 							}
 						}
 
 						const isAvailable = bookingsInAppointment < maxBookings;
 
 						if (isAvailable) {
-							console.log(`        ✅ ${appointmentStartTime}-${appointmentEndTime} available (${bookingsInAppointment}/${maxBookings})`);
+							console.log(
+								`        ✅ ${appointmentStartTime}-${appointmentEndTime} available (${bookingsInAppointment}/${maxBookings})`
+							);
 							availableSlots.push({
 								date: dateStr,
 								dayOfWeek: dayOfWeekNum,
@@ -342,10 +399,12 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 								endDateTime: endDateTimeStr,
 								duration: duration,
 								currentBookings: bookingsInAppointment,
-								maxBookings: maxBookings
+								maxBookings: maxBookings,
 							});
 						} else {
-							console.log(`        ❌ ${appointmentStartTime}-${appointmentEndTime} FULL (${bookingsInAppointment}/${maxBookings})`);
+							console.log(
+								`        ❌ ${appointmentStartTime}-${appointmentEndTime} FULL (${bookingsInAppointment}/${maxBookings})`
+							);
 						}
 					}
 				}
@@ -357,7 +416,11 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 		if (availableSlots.length > 0) {
 			console.log(`\n📊 Sample slot details (first 3):`);
 			availableSlots.slice(0, 3).forEach((slot, idx) => {
-				console.log(`  ${idx + 1}. ${slot.dayName} ${slot.date} ${slot.startTime}-${slot.endTime}`);
+				console.log(
+					`  ${idx + 1}. ${slot.dayName} ${slot.date} ${slot.startTime}-${
+						slot.endTime
+					}`
+				);
 				console.log(`     startDateTime: ${slot.startDateTime}`);
 				console.log(`     endDateTime: ${slot.endDateTime}`);
 			});
@@ -366,11 +429,22 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 
 		return { availableSlots };
 	} catch (error) {
-		console.error('❌ Error getting available slots:', error);
+		console.error("❌ Error getting available slots:", error);
 		return { availableSlots: [] };
 	}
 }
-async function createBooking(userId, conversationId, senderId, platform, summary, start, end, description, attendeeEmail, attendeeName) {
+async function createBooking(
+	userId,
+	conversationId,
+	senderId,
+	platform,
+	summary,
+	start,
+	end,
+	description,
+	attendeeEmail,
+	attendeeName
+) {
 	try {
 		console.log(`\n🎯 ========== CREATE BOOKING CALLED ==========`);
 		console.log(`📋 Summary: ${summary}`);
@@ -386,7 +460,7 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 		const Business = require("../models/Business");
 
 		const user = await User.findById(userId);
-		if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
+		if (!user || user.googleCalendarIntegrationStatus !== "connected") {
 			return { error: "Google Calendar not connected" };
 		}
 
@@ -397,11 +471,11 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 			process.env.GOOGLE_CALENDAR_REDIRECT_URI
 		);
 		oauth2Client.setCredentials({ access_token: accessToken });
-		const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+		const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
 		// Get business timezone (or use Google Calendar timezone as fallback)
 		const businessInfo = await Business.findOne({ user: userId });
-		let timezone = 'UTC'; // Default fallback
+		let timezone = "UTC"; // Default fallback
 
 		if (businessInfo && businessInfo.timezone) {
 			timezone = businessInfo.timezone;
@@ -409,12 +483,11 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 		} else {
 			// Fallback to Google Calendar timezone
 			const calendarInfo = await calendar.calendars.get({
-				calendarId: 'primary'
+				calendarId: "primary",
 			});
-			timezone = calendarInfo.data.timeZone || 'UTC';
+			timezone = calendarInfo.data.timeZone || "UTC";
 			console.log(`📍 Using Google Calendar timezone: ${timezone}`);
 		}
-
 
 		// CRITICAL: Check for conflicts before creating booking
 		console.log(`🔍 Checking for conflicts: ${start} to ${end}`);
@@ -423,27 +496,37 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 		const requestedEnd = new Date(end);
 
 		console.log(`🔍 Requested time range (parsed):`);
-		console.log(`   Start: ${requestedStart.toISOString()} (${requestedStart.toString()})`);
-		console.log(`   End: ${requestedEnd.toISOString()} (${requestedEnd.toString()})`);
+		console.log(
+			`   Start: ${requestedStart.toISOString()} (${requestedStart.toString()})`
+		);
+		console.log(
+			`   End: ${requestedEnd.toISOString()} (${requestedEnd.toString()})`
+		);
 
 		// Get existing bookings from Google Calendar for this time range
 		const existingEvents = await calendar.events.list({
-			calendarId: 'primary',
+			calendarId: "primary",
 			timeMin: requestedStart.toISOString(),
 			timeMax: requestedEnd.toISOString(),
 			singleEvents: true,
-			orderBy: 'startTime'
+			orderBy: "startTime",
 		});
 
-		console.log(`📅 Found ${existingEvents.data.items.length} existing events in this time range`);
+		console.log(
+			`📅 Found ${existingEvents.data.items.length} existing events in this time range`
+		);
 		existingEvents.data.items.forEach((event, idx) => {
 			const eventStart = new Date(event.start.dateTime || event.start.date);
 			const eventEnd = new Date(event.end.dateTime || event.end.date);
-			console.log(`   ${idx + 1}. "${event.summary}": ${eventStart.toISOString()} - ${eventEnd.toISOString()}`);
+			console.log(
+				`   ${idx + 1}. "${
+					event.summary
+				}": ${eventStart.toISOString()} - ${eventEnd.toISOString()}`
+			);
 		});
 
 		// Check if any existing event conflicts with the requested time
-		const conflicts = existingEvents.data.items.filter(event => {
+		const conflicts = existingEvents.data.items.filter((event) => {
 			const eventStart = new Date(event.start.dateTime || event.start.date);
 			const eventEnd = new Date(event.end.dateTime || event.end.date);
 
@@ -452,51 +535,65 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 
 			if (hasOverlap) {
 				console.log(`⚠️  CONFLICT: "${event.summary}"`);
-				console.log(`     Event: ${eventStart.toISOString()} - ${eventEnd.toISOString()}`);
-				console.log(`     Requested: ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`);
-				console.log(`     Overlap check: ${requestedStart.toISOString()} < ${eventEnd.toISOString()} && ${requestedEnd.toISOString()} > ${eventStart.toISOString()}`);
+				console.log(
+					`     Event: ${eventStart.toISOString()} - ${eventEnd.toISOString()}`
+				);
+				console.log(
+					`     Requested: ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`
+				);
+				console.log(
+					`     Overlap check: ${requestedStart.toISOString()} < ${eventEnd.toISOString()} && ${requestedEnd.toISOString()} > ${eventStart.toISOString()}`
+				);
 			}
 
 			return hasOverlap;
 		});
 
 		if (conflicts.length > 0) {
-			console.log(`❌ Cannot create booking - ${conflicts.length} conflict(s) found`);
+			console.log(
+				`❌ Cannot create booking - ${conflicts.length} conflict(s) found`
+			);
 			return {
-				error: "This time slot is already booked. Please choose a different time.",
-				conflicts: conflicts.map(c => ({
+				error:
+					"This time slot is already booked. Please choose a different time.",
+				conflicts: conflicts.map((c) => ({
 					summary: c.summary,
 					start: c.start.dateTime || c.start.date,
-					end: c.end.dateTime || c.end.date
-				}))
+					end: c.end.dateTime || c.end.date,
+				})),
 			};
 		}
 
 		// Also check slot capacity limits (reuse businessInfo from above)
 		if (businessInfo) {
 			// Determine date in business timezone to get correct day of week
-			const tz = businessInfo.timezone || 'UTC';
+			const tz = businessInfo.timezone || "UTC";
 			const requestedDate = new Date(start);
 
 			// Get day of week in business timezone
-			const localDateStr = requestedDate.toLocaleString('en-US', { timeZone: tz });
+			const localDateStr = requestedDate.toLocaleString("en-US", {
+				timeZone: tz,
+			});
 			const localDate = new Date(localDateStr);
 			const dayOfWeek = localDate.getDay();
 
 			const timeSlots = await TimeSlot.find({
 				business: businessInfo._id,
 				dayOfWeek: dayOfWeek,
-				isActive: true
+				isActive: true,
 			});
 
 			// Get offset for constructing slot times
 			const getTzOffset = (date) => {
 				try {
-					const str = date.toLocaleString('en-US', { timeZone: tz, timeZoneName: 'longOffset' });
+					const str = date.toLocaleString("en-US", {
+						timeZone: tz,
+						timeZoneName: "longOffset",
+					});
 					const match = str.match(/GMT([+-]\d{2}:?\d{2})/);
-					return match ? match[1] : '+00:00';
+					return match ? match[1] : "+00:00";
 				} catch (e) {
-					return '+00:00';
+					return "+00:00";
 				}
 			};
 
@@ -504,7 +601,9 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 
 			// Get YYYY-MM-DD in business timezone
 			// We can use the parts from toLocaleString to be safe
-			const dateParts = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(requestedDate); // YYYY-MM-DD
+			const dateParts = new Intl.DateTimeFormat("en-CA", {
+				timeZone: tz,
+			}).format(requestedDate); // YYYY-MM-DD
 			const businessDateStr = dateParts;
 
 			// Check if this booking exceeds max bookings for the slot
@@ -514,35 +613,57 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 
 					// Construct slot times using business date and offset
 					// format: 2025-12-29T09:00:00+05:00
-					const slotStart = new Date(`${businessDateStr}T${slot.startTime}:00${offset}`);
-					const slotEnd = new Date(`${businessDateStr}T${slot.endTime}:00${offset}`);
+					const slotStart = new Date(
+						`${businessDateStr}T${slot.startTime}:00${offset}`
+					);
+					const slotEnd = new Date(
+						`${businessDateStr}T${slot.endTime}:00${offset}`
+					);
 
 					// Check if requested time overlaps with this slot
 					if (requestedStart < slotEnd && requestedEnd > slotStart) {
-						console.log(`🔍 Checking capacity for slot ${slot.startTime}-${slot.endTime} (max: ${slot.maxBookings})`);
+						console.log(
+							`🔍 Checking capacity for slot ${slot.startTime}-${slot.endTime} (max: ${slot.maxBookings})`
+						);
 
 						// Count existing bookings that OVERLAP with this slot
-						const overlappingBookings = existingEvents.data.items.filter(event => {
-							const eStart = new Date(event.start.dateTime || event.start.date);
-							const eEnd = new Date(event.end.dateTime || event.end.date);
+						const overlappingBookings = existingEvents.data.items.filter(
+							(event) => {
+								const eStart = new Date(
+									event.start.dateTime || event.start.date
+								);
+								const eEnd = new Date(event.end.dateTime || event.end.date);
 
-							// Check if the existing event overlaps with this slot
-							return eStart < slotEnd && eEnd > slotStart;
-						});
+								// Check if the existing event overlaps with this slot
+								return eStart < slotEnd && eEnd > slotStart;
+							}
+						);
 
 						const bookingCount = overlappingBookings.length;
-						console.log(`📊 Found ${bookingCount} overlapping bookings in this slot`);
+						console.log(
+							`📊 Found ${bookingCount} overlapping bookings in this slot`
+						);
 						overlappingBookings.forEach((b, idx) => {
-							console.log(`  ${idx + 1}. ${b.summary} (${new Date(b.start.dateTime || b.start.date).toISOString()} - ${new Date(b.end.dateTime || b.end.date).toISOString()})`);
+							console.log(
+								`  ${idx + 1}. ${b.summary} (${new Date(
+									b.start.dateTime || b.start.date
+								).toISOString()} - ${new Date(
+									b.end.dateTime || b.end.date
+								).toISOString()})`
+							);
 						});
 
 						if (bookingCount >= slot.maxBookings) {
-							console.log(`❌ Slot capacity reached: ${bookingCount}/${slot.maxBookings} bookings`);
+							console.log(
+								`❌ Slot capacity reached: ${bookingCount}/${slot.maxBookings} bookings`
+							);
 							return {
-								error: `This time slot has reached its maximum capacity (${slot.maxBookings} bookings). Please choose a different time.`
+								error: `This time slot has reached its maximum capacity (${slot.maxBookings} bookings). Please choose a different time.`,
 							};
 						} else {
-							console.log(`✅ Slot has capacity: ${bookingCount}/${slot.maxBookings} bookings`);
+							console.log(
+								`✅ Slot has capacity: ${bookingCount}/${slot.maxBookings} bookings`
+							);
 						}
 					}
 				}
@@ -559,7 +680,7 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 			if (/[+-]\d{2}:\d{2}$/.test(dateTimeStr)) {
 				// Already has timezone offset, use as-is
 				return { dateTime: dateTimeStr };
-			} else if (dateTimeStr.endsWith('Z')) {
+			} else if (dateTimeStr.endsWith("Z")) {
 				// Has UTC marker, remove and add timezone
 				return { dateTime: dateTimeStr.slice(0, -1), timeZone: timezone };
 			} else {
@@ -573,19 +694,21 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 			description,
 			start: formatDateTime(start),
 			end: formatDateTime(end),
-			attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName }] : []
+			attendees: attendeeEmail
+				? [{ email: attendeeEmail, displayName: attendeeName }]
+				: [],
 		};
 
 		console.log(`📅 Creating Google Calendar event:`, {
 			summary: event.summary,
 			start: event.start,
 			end: event.end,
-			timezone: timezone
+			timezone: timezone,
 		});
 
 		const response = await calendar.events.insert({
-			calendarId: 'primary',
-			resource: event
+			calendarId: "primary",
+			resource: event,
 		});
 
 		// Save booking to database
@@ -599,26 +722,36 @@ async function createBooking(userId, conversationId, senderId, platform, summary
 			description,
 			start: {
 				dateTime: start,
-				timeZone: timezone
+				timeZone: timezone,
 			},
 			end: {
 				dateTime: end,
-				timeZone: timezone
+				timeZone: timezone,
 			},
-			attendees: attendeeEmail ? [{ email: attendeeEmail, displayName: attendeeName, responseStatus: 'needsAction' }] : []
+			attendees: attendeeEmail
+				? [
+						{
+							email: attendeeEmail,
+							displayName: attendeeName,
+							responseStatus: "needsAction",
+						},
+				  ]
+				: [],
 		});
 
 		await booking.save();
-		console.log(`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`);
+		console.log(
+			`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`
+		);
 
 		return {
 			eventId: response.data.id,
 			bookingId: booking._id,
-			status: 'created'
+			status: "created",
 		};
 	} catch (error) {
-		console.error('Error creating booking:', error);
-		return { error: 'Failed to create booking' };
+		console.error("Error creating booking:", error);
+		return { error: "Failed to create booking" };
 	}
 }
 async function cancelBooking(userId, eventId) {
@@ -626,7 +759,7 @@ async function cancelBooking(userId, eventId) {
 		const User = require("../models/User");
 		const Booking = require("../models/Booking");
 		const user = await User.findById(userId);
-		if (!user || user.googleCalendarIntegrationStatus !== 'connected') {
+		if (!user || user.googleCalendarIntegrationStatus !== "connected") {
 			return { error: "Google Calendar not connected" };
 		}
 		const accessToken = await refreshAccessTokenIfNeeded(user);
@@ -636,12 +769,12 @@ async function cancelBooking(userId, eventId) {
 			process.env.GOOGLE_CALENDAR_REDIRECT_URI
 		);
 		oauth2Client.setCredentials({ access_token: accessToken });
-		const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+		const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
 		// Delete the event from Google Calendar
 		await calendar.events.delete({
-			calendarId: 'primary',
-			eventId: eventId
+			calendarId: "primary",
+			eventId: eventId,
 		});
 
 		// Delete booking from database
@@ -651,10 +784,10 @@ async function cancelBooking(userId, eventId) {
 			console.log(`💾 Booking deleted from database: ${booking._id}`);
 		}
 
-		return { eventId, status: 'cancelled' };
+		return { eventId, status: "cancelled" };
 	} catch (error) {
-		console.error('Error cancelling booking:', error);
-		return { error: 'Failed to cancel booking' };
+		console.error("Error cancelling booking:", error);
+		return { error: "Failed to cancel booking" };
 	}
 }
 async function listUserBookings(conversationId, senderId, userId) {
@@ -664,25 +797,27 @@ async function listUserBookings(conversationId, senderId, userId) {
 			conversationId,
 			senderId,
 			userId,
-			status: 'active'
+			status: "active",
 		}).sort({ createdAt: -1 });
 
-		console.log(`📋 Found ${bookings.length} active bookings for conversation ${conversationId}`);
+		console.log(
+			`📋 Found ${bookings.length} active bookings for conversation ${conversationId}`
+		);
 
 		return {
-			bookings: bookings.map(booking => ({
+			bookings: bookings.map((booking) => ({
 				id: booking._id,
 				eventId: booking.eventId,
 				summary: booking.summary,
 				start: booking.start,
 				end: booking.end,
 				attendees: booking.attendees,
-				createdAt: booking.createdAt
-			}))
+				createdAt: booking.createdAt,
+			})),
 		};
 	} catch (error) {
-		console.error('Error listing user bookings:', error);
-		return { error: 'Failed to list bookings' };
+		console.error("Error listing user bookings:", error);
+		return { error: "Failed to list bookings" };
 	}
 }
 // OpenAI API Configuration
@@ -690,14 +825,23 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5";
 
 // Function to get OpenAI response
-async function getOpenAIResponse(userMessage, senderId, userId, platform = 'instagram') {
+async function getOpenAIResponse(
+	userMessage,
+	senderId,
+	userId,
+	platform = "instagram"
+) {
 	try {
 		console.log(`\n🤖 Sending to OpenAI (${OPENAI_MODEL})...`);
 		console.log(`📝 User message: "${userMessage}"`);
 		console.log(`👤 User ID: ${userId}`);
 
 		// Get or create conversation from database
-		const conversation = await Conversation.findOrCreate(senderId, platform, userId);
+		const conversation = await Conversation.findOrCreate(
+			senderId,
+			platform,
+			userId
+		);
 		const conversationHistory = conversation.getRecentMessages(10);
 
 		// Fetch user-specific business information and FAQs from database
@@ -717,12 +861,18 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 				businessInfo =
 					`A ${business.businessCategory} company. ` +
 					`email address is ${business.email}` +
-					(business.phoneNumber ? ` & phone number or contact number is ${business.phoneNumber}` : "") +
-					(business.website ? `. & website or social media is: ${business.website}` : "") +
+					(business.phoneNumber
+						? ` & phone number or contact number is ${business.phoneNumber}`
+						: "") +
+					(business.website
+						? `. & website or social media is: ${business.website}`
+						: "") +
 					(business.businessDescription
 						? `More information about business is: ${business.businessDescription}`
 						: "") +
-					(business.address ? `. business office Location or address: ${business.address}` : "") +
+					(business.address
+						? `. business office Location or address: ${business.address}`
+						: "") +
 					(business.timezone ? `. Our timezone is ${business.timezone}` : "");
 			} else {
 				businessInfo = "our business";
@@ -751,9 +901,8 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 				role: "system",
 				content:
 					`You are a real customer support team member for ${businessName}.` +
-					"You chat with customers the way people talk on Instagram or WhatsApp in real life."+
-
-`VOICE & STYLE:
+					"You chat with customers the way people talk on Instagram or WhatsApp in real life." +
+					`VOICE & STYLE:
 - Sound natural, relaxed, and human
 - Short sentences are good
 - Contractions are normal (we’re, you’ll, that’s)
@@ -762,10 +911,10 @@ async function getOpenAIResponse(userMessage, senderId, userId, platform = 'inst
 - Polite, calm, and confident
 - Never robotic, never corporate
 
-Think: a helpful staff member replying from their phone.`
+Think: a helpful staff member replying from their phone.` +
+					`
 
-+
-`DO NOT:
+DO NOT:
 - Over-explain
 - Use formal or corporate language
 - Sound like a policy document
@@ -773,9 +922,10 @@ Think: a helpful staff member replying from their phone.`
 - Use jokes or sarcasm
 
 Keep replies under 500 characters.
-Instagram messages should feel light and easy to read.`
+Instagram messages should feel light and easy to read.` +
+					`
 
-`EXAMPLE TONE:
+EXAMPLE TONE:
 
 User: Hi, do you have availability this week?
 Assistant: Hey! Let me check what we have open for you 👍
@@ -786,10 +936,8 @@ Assistant: Sure. What day works best for you?
 User: Hi
 Assistant: Hey! What can I help you with?
 
-`+
-
-					+
-`BOOKINGS (VERY IMPORTANT – FOLLOW EXACTLY):
+` +
+					`BOOKINGS (VERY IMPORTANT – FOLLOW EXACTLY):
 
 If a user shows interest in booking, scheduling, or reserving:
 
@@ -884,7 +1032,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 
 		// Add conversation history from database
 		conversationHistory.forEach((msg) => {
-			if (msg.role !== 'system') {
+			if (msg.role !== "system") {
 				messages.push({
 					role: msg.role,
 					content: msg.content,
@@ -904,35 +1052,63 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 				type: "function",
 				function: {
 					name: "get_available_booking_slots",
-					description: "Get available time slots for booking appointments with the business",
+					description:
+						"Get available time slots for booking appointments with the business",
 					parameters: {
 						type: "object",
 						properties: {
-							startDate: { type: "string", description: "Start date in YYYY-MM-DD format" },
-							endDate: { type: "string", description: "End date in YYYY-MM-DD format" }
+							startDate: {
+								type: "string",
+								description: "Start date in YYYY-MM-DD format",
+							},
+							endDate: {
+								type: "string",
+								description: "End date in YYYY-MM-DD format",
+							},
 						},
-						required: ["startDate", "endDate"]
-					}
-				}
+						required: ["startDate", "endDate"],
+					},
+				},
 			},
 			{
 				type: "function",
 				function: {
 					name: "create_booking",
-					description: "Create a new booking appointment on the calendar. CRITICAL: You must use the exact 'startDateTime' and 'endDateTime' values from get_available_booking_slots response. DO NOT use startTime/endTime, DO NOT construct datetime strings, DO NOT add 'Z' suffix. Copy startDateTime and endDateTime exactly as provided.",
+					description:
+						"Create a new booking appointment on the calendar. CRITICAL: You must use the exact 'startDateTime' and 'endDateTime' values from get_available_booking_slots response. DO NOT use startTime/endTime, DO NOT construct datetime strings, DO NOT add 'Z' suffix. Copy startDateTime and endDateTime exactly as provided.",
 					parameters: {
 						type: "object",
 						properties: {
-							summary: { type: "string", description: "Booking title or service type" },
-							start: { type: "string", description: "MUST be the exact 'startDateTime' value from get_available_booking_slots (e.g. '2025-12-29T08:00:00+05:00'). DO NOT construct from date+startTime. DO NOT use UTC/Z format." },
-							end: { type: "string", description: "MUST be the exact 'endDateTime' value from get_available_booking_slots (e.g. '2025-12-29T09:00:00+05:00'). DO NOT construct from date+endTime. DO NOT use UTC/Z format." },
-							description: { type: "string", description: "Additional details about the booking" },
-							attendeeEmail: { type: "string", description: "Email of the person booking" },
-							attendeeName: { type: "string", description: "Name of the person booking" }
+							summary: {
+								type: "string",
+								description: "Booking title or service type",
+							},
+							start: {
+								type: "string",
+								description:
+									"MUST be the exact 'startDateTime' value from get_available_booking_slots (e.g. '2025-12-29T08:00:00+05:00'). DO NOT construct from date+startTime. DO NOT use UTC/Z format.",
+							},
+							end: {
+								type: "string",
+								description:
+									"MUST be the exact 'endDateTime' value from get_available_booking_slots (e.g. '2025-12-29T09:00:00+05:00'). DO NOT construct from date+endTime. DO NOT use UTC/Z format.",
+							},
+							description: {
+								type: "string",
+								description: "Additional details about the booking",
+							},
+							attendeeEmail: {
+								type: "string",
+								description: "Email of the person booking",
+							},
+							attendeeName: {
+								type: "string",
+								description: "Name of the person booking",
+							},
 						},
-						required: ["summary", "start", "end"]
-					}
-				}
+						required: ["summary", "start", "end"],
+					},
+				},
 			},
 			{
 				type: "function",
@@ -942,24 +1118,29 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 					parameters: {
 						type: "object",
 						properties: {
-							eventId: { type: "string", description: "The Google Calendar event ID of the booking to cancel" }
+							eventId: {
+								type: "string",
+								description:
+									"The Google Calendar event ID of the booking to cancel",
+							},
 						},
-						required: ["eventId"]
-					}
-				}
+						required: ["eventId"],
+					},
+				},
 			},
 			{
 				type: "function",
 				function: {
 					name: "list_user_bookings",
-					description: "List all active bookings for the current conversation/user",
+					description:
+						"List all active bookings for the current conversation/user",
 					parameters: {
 						type: "object",
 						properties: {},
-						required: []
-					}
-				}
-			}
+						required: [],
+					},
+				},
+			},
 		];
 
 		// Function to make API call and handle responses
@@ -969,8 +1150,6 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 				messages: msgs,
 				max_completion_tokens: 500,
 			};
-
-
 
 			// Add tools only if not in a function call response
 			if (!toolCalls) {
@@ -998,15 +1177,18 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 		let toolCallCount = 0;
 
 		// Handle function calls in a loop to allow multiple rounds without intermediate messaging
-		while (response.choices[0].message.tool_calls &&
+		while (
+			response.choices[0].message.tool_calls &&
 			response.choices[0].message.tool_calls.length > 0 &&
-			toolCallCount < maxToolCalls) {
-
+			toolCallCount < maxToolCalls
+		) {
 			toolCallCount++;
 			const choice = response.choices[0];
 			const toolCalls = choice.message.tool_calls;
 
-			console.log(`\n🔧 Function calls detected (round ${toolCallCount}): ${toolCalls.length} calls`);
+			console.log(
+				`\n🔧 Function calls detected (round ${toolCallCount}): ${toolCalls.length} calls`
+			);
 			toolCalls.forEach((call, index) => {
 				console.log(`  ${index + 1}. ${call.function.name}`);
 			});
@@ -1024,7 +1206,10 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 					let toolResult = "";
 
 					if (functionName === "get_available_booking_slots") {
-						console.log(`🔧 Executing get_available_booking_slots with args:`, functionArgs);
+						console.log(
+							`🔧 Executing get_available_booking_slots with args:`,
+							functionArgs
+						);
 						// Use provided dates or generate default range
 						let startDate = functionArgs.startDate;
 						let endDate = functionArgs.endDate;
@@ -1037,32 +1222,55 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							const dateRange = generateBookingDateRange();
 							startDate = dateRange.startDate;
 							endDate = dateRange.endDate;
-							console.log(`📅 Using generated date range: ${startDate} to ${endDate}`);
+							console.log(
+								`📅 Using generated date range: ${startDate} to ${endDate}`
+							);
 						} else {
-							console.log(`📅 Using provided date range: ${startDate} to ${endDate}`);
+							console.log(
+								`📅 Using provided date range: ${startDate} to ${endDate}`
+							);
 
 							// Basic validation - ensure dates are not too far in past/future
 							const start = new Date(startDate);
 							const end = new Date(endDate);
 							const now = new Date();
-							const oneYearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-							const oneYearFromNow = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+							const oneYearAgo = new Date(
+								now.getTime() - 365 * 24 * 60 * 60 * 1000
+							);
+							const oneYearFromNow = new Date(
+								now.getTime() + 365 * 24 * 60 * 60 * 1000
+							);
 
-							if (start < oneYearAgo || start > oneYearFromNow || end < oneYearAgo || end > oneYearFromNow) {
-								console.log(`❌ Date range too far from current date, using default range`);
+							if (
+								start < oneYearAgo ||
+								start > oneYearFromNow ||
+								end < oneYearAgo ||
+								end > oneYearFromNow
+							) {
+								console.log(
+									`❌ Date range too far from current date, using default range`
+								);
 								const dateRange = generateBookingDateRange();
 								startDate = dateRange.startDate;
 								endDate = dateRange.endDate;
 							} else if (end <= start) {
-								console.log(`❌ Invalid date range: end (${endDate}) <= start (${startDate}), using default range`);
+								console.log(
+									`❌ Invalid date range: end (${endDate}) <= start (${startDate}), using default range`
+								);
 								const dateRange = generateBookingDateRange();
 								startDate = dateRange.startDate;
 								endDate = dateRange.endDate;
-								console.log(`🔄 Using fallback date range: ${startDate} to ${endDate}`);
+								console.log(
+									`🔄 Using fallback date range: ${startDate} to ${endDate}`
+								);
 							}
 						}
 
-						const slots = await getAvailableBookingSlots(userId, startDate, endDate);
+						const slots = await getAvailableBookingSlots(
+							userId,
+							startDate,
+							endDate
+						);
 						toolResult = JSON.stringify(slots);
 						console.log(`📅 Available slots result:`, slots);
 					} else if (functionName === "create_booking") {
@@ -1080,16 +1288,31 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 						);
 						toolResult = JSON.stringify(booking);
 					} else if (functionName === "cancel_booking") {
-						console.log(`🔧 Executing cancel_booking with eventId: ${functionArgs.eventId}`);
-						const cancellation = await cancelBooking(userId, functionArgs.eventId);
+						console.log(
+							`🔧 Executing cancel_booking with eventId: ${functionArgs.eventId}`
+						);
+						const cancellation = await cancelBooking(
+							userId,
+							functionArgs.eventId
+						);
 						toolResult = JSON.stringify(cancellation);
 						console.log(`📅 Cancellation result:`, cancellation);
 						console.log(`💾 Booking cancelled in database`);
 					} else if (functionName === "list_user_bookings") {
-						console.log(`🔧 Executing list_user_bookings for conversation ${conversation._id}`);
-						const bookings = await listUserBookings(conversation._id, senderId, userId);
+						console.log(
+							`🔧 Executing list_user_bookings for conversation ${conversation._id}`
+						);
+						const bookings = await listUserBookings(
+							conversation._id,
+							senderId,
+							userId
+						);
 						toolResult = JSON.stringify(bookings);
-						console.log(`📋 User bookings result: ${bookings.bookings?.length || 0} bookings`);
+						console.log(
+							`📋 User bookings result: ${
+								bookings.bookings?.length || 0
+							} bookings`
+						);
 					} else {
 						toolResult = JSON.stringify({ error: "Unknown function" });
 					}
@@ -1098,54 +1321,58 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 					messages.push({
 						role: "tool",
 						tool_call_id: toolCall.id,
-						content: toolResult
+						content: toolResult,
 					});
 					console.log(`🔧 Tool result added to messages:`, toolResult);
-
 				} catch (toolError) {
 					console.error(`\n❌ Tool execution error:`, toolError);
 					messages.push({
 						role: "tool",
 						tool_call_id: toolCall.id,
-						content: JSON.stringify({ error: toolError.message || "Tool execution failed" })
+						content: JSON.stringify({
+							error: toolError.message || "Tool execution failed",
+						}),
 					});
 				}
 			}
 
 			// Make API call with tool results (may result in more tool calls or final response)
-			console.log(`🤖 Making API call with tool results (round ${toolCallCount})...`);
+			console.log(
+				`🤖 Making API call with tool results (round ${toolCallCount})...`
+			);
 			response = await makeOpenAICall(messages);
 		}
 
 		// Get final response
 		const finalChoice = response.choices[0];
-		aiResponse = finalChoice.message.content || "I'm not sure how to respond to that.";
+		aiResponse =
+			finalChoice.message.content || "I'm not sure how to respond to that.";
 
 		console.log(`\n✅ Final OpenAI Response:\n${aiResponse}\n`);
 		console.log(`📊 Response metadata:`, {
 			finish_reason: finalChoice.finish_reason,
 			has_tool_calls: !!finalChoice.message.tool_calls,
-			content_length: aiResponse.length
+			content_length: aiResponse.length,
 		});
 
 		// Save both messages to database
-		await conversation.addMessage('user', userMessage);
-		await conversation.addMessage('assistant', aiResponse);
+		await conversation.addMessage("user", userMessage);
+		await conversation.addMessage("assistant", aiResponse);
 
 		// Check if this is a failed response and save to unanswered questions
 		if (isFailedResponse(aiResponse)) {
 			try {
-				const UnansweredQuestion = require('../models/UnansweredQuestion');
+				const UnansweredQuestion = require("../models/UnansweredQuestion");
 				await UnansweredQuestion.create({
 					userId: user._id,
 					question: userMessage,
 					botResponse: aiResponse,
 					conversationId: conversation._id,
-					status: 'pending'
+					status: "pending",
 				});
-				console.log('📝 Saved unanswered question to database');
+				console.log("📝 Saved unanswered question to database");
 			} catch (err) {
-				console.error('❌ Error saving unanswered question:', err);
+				console.error("❌ Error saving unanswered question:", err);
 			}
 		}
 
@@ -1176,12 +1403,12 @@ async function sendInstagramMessage(
 				message: {
 					// Clean Markdown characters (** or __ for bold, * or _ for italic, ` for code)
 					text: messageText
-						.replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold **text**
-						.replace(/__(.*?)__/g, '$1')     // Remove bold __text__
-						.replace(/\*(.*?)\*/g, '$1')     // Remove italic *text*
-						.replace(/_(.*?)_/g, '$1')       // Remove italic _text_
-						.replace(/`(.*?)`/g, '$1')       // Remove code `text`
-						.replace(/^\s*[-•]\s+/gm, '• ')   // Normalize list bullets
+						.replace(/\*\*(.*?)\*\*/g, "$1") // Remove bold **text**
+						.replace(/__(.*?)__/g, "$1") // Remove bold __text__
+						.replace(/\*(.*?)\*/g, "$1") // Remove italic *text*
+						.replace(/_(.*?)_/g, "$1") // Remove italic _text_
+						.replace(/`(.*?)`/g, "$1") // Remove code `text`
+						.replace(/^\s*[-•]\s+/gm, "• "), // Normalize list bullets
 				},
 			},
 			{
@@ -1208,7 +1435,7 @@ async function sendInstagramMessage(
 			);
 			return {
 				username: response.data.username,
-				profilePicture: null // Profile pictures not available for IG Business scoped IDs
+				profilePicture: null, // Profile pictures not available for IG Business scoped IDs
 			};
 		} catch (error) {
 			console.error(
@@ -1217,7 +1444,7 @@ async function sendInstagramMessage(
 			);
 			return {
 				username: null,
-				profilePicture: null
+				profilePicture: null,
 			};
 		}
 	}
@@ -1420,7 +1647,9 @@ app.post("/instagram", async function (req, res) {
 
 							// Check if Instagram webhook is paused for this user
 							if (user && user.instagramWebhookPaused) {
-								console.log(`⏸️  Instagram webhook is paused for user ${user._id}. Message not processed.`);
+								console.log(
+									`⏸️  Instagram webhook is paused for user ${user._id}. Message not processed.`
+								);
 								return; // Skip processing
 							}
 
@@ -1430,7 +1659,7 @@ app.post("/instagram", async function (req, res) {
 									userMessage,
 									senderId,
 									user._id,
-									'instagram'
+									"instagram"
 								);
 
 								// Send reply to Instagram using user's token
@@ -1520,7 +1749,7 @@ app.post("/whatsapp", async function (req, res) {
 										if (
 											process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN &&
 											process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN !==
-											"your_whatsapp_access_token_here" &&
+												"your_whatsapp_access_token_here" &&
 											process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN.length > 50
 										) {
 											try {
@@ -1562,7 +1791,7 @@ app.post("/whatsapp", async function (req, res) {
 });
 
 // For local development
-if (process.env.NODE_ENV !== 'production') {
+if (process.env.NODE_ENV !== "production") {
 	const PORT = app.get("port");
 	app.listen(PORT, function () {
 		console.log(`Node app is running on port ${PORT}`);
