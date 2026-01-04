@@ -981,12 +981,30 @@ async function getOpenAIResponse(
 			{
 				role: "system",
 				content:
-					`IMPORTANT RESPONSE FORMAT:
-At the very end of your response, after your message to the user, add a classification on a new line:
-[CLASSIFICATION: ANSWERED] if you successfully provided helpful information
-[CLASSIFICATION: UNANSWERED] if you declined, refused, redirected to business topics, or couldn't help
+					`⚠️ CRITICAL REQUIREMENT - MUST FOLLOW ⚠️
 
-This classification line will be parsed and removed before sending to the user.
+EVERY SINGLE RESPONSE YOU GIVE MUST END WITH ONE OF THESE TWO LINES:
+[CLASSIFICATION: ANSWERED]
+[CLASSIFICATION: UNANSWERED]
+
+NO EXCEPTIONS. THIS IS MANDATORY FOR EVERY RESPONSE.
+
+When to use each:
+• [CLASSIFICATION: ANSWERED] - You provided useful business information, answered their question about services/booking, or engaged meaningfully
+• [CLASSIFICATION: UNANSWERED] - You redirected them to business topics, declined to answer, or the question was outside business scope
+
+EXAMPLE FORMAT:
+"Hey! Let me check availability for you 👍
+
+[CLASSIFICATION: ANSWERED]"
+
+OR
+
+"I'm here to help with anything related to ${businessName}. Let me know if you need info about our services!
+
+[CLASSIFICATION: UNANSWERED]"
+
+The classification tag MUST be on its own line at the very end. It will be automatically removed before the user sees your message.
 
 ---
 
@@ -1456,9 +1474,29 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 				}`
 			);
 		} else {
-			// Fallback: if no classification found, assume answered
+			// Fallback: Use pattern matching to detect refusal responses
 			aiResponse = rawResponse;
-			console.log(`⚠️ No classification found in response, assuming ANSWERED`);
+			
+			// Check for common refusal/redirect patterns
+			const refusalPatterns = [
+				/I'm here to (help|assist) with.*related to/i,
+				/I can (only|just) help with.*related to/i,
+				/I'm here for.*questions.*about/i,
+				/Let me know if you need help with/i,
+				/I don't have.*information/i,
+				/not sure how to respond/i,
+				/can't help with that/i,
+				/outside my scope/i,
+				/not something I can assist with/i
+			];
+			
+			isUnanswered = refusalPatterns.some(pattern => pattern.test(aiResponse));
+			
+			if (isUnanswered) {
+				console.log(`⚠️ No classification tag found, but pattern-based detection identified: UNANSWERED`);
+			} else {
+				console.log(`⚠️ No classification tag found, pattern-based detection: ANSWERED`);
+			}
 		}
 
 		console.log(`\n✅ Final OpenAI Response:\n${aiResponse}\n`);
