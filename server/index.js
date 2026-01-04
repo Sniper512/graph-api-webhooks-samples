@@ -1365,7 +1365,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 			try {
 				const UnansweredQuestion = require("../models/UnansweredQuestion");
 				await UnansweredQuestion.create({
-					userId: user._id,
+					userId: userId,
 					question: userMessage,
 					botResponse: aiResponse,
 					conversationId: conversation._id,
