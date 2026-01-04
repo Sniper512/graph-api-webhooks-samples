@@ -1476,7 +1476,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 		} else {
 			// Fallback: Use pattern matching to detect refusal responses
 			aiResponse = rawResponse;
-			
+
 			// Check for common refusal/redirect patterns
 			const refusalPatterns = [
 				/I'm here to (help|assist) with.*related to/i,
@@ -1487,15 +1487,21 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 				/not sure how to respond/i,
 				/can't help with that/i,
 				/outside my scope/i,
-				/not something I can assist with/i
+				/not something I can assist with/i,
 			];
-			
-			isUnanswered = refusalPatterns.some(pattern => pattern.test(aiResponse));
-			
+
+			isUnanswered = refusalPatterns.some((pattern) =>
+				pattern.test(aiResponse)
+			);
+
 			if (isUnanswered) {
-				console.log(`⚠️ No classification tag found, but pattern-based detection identified: UNANSWERED`);
+				console.log(
+					`⚠️ No classification tag found, but pattern-based detection identified: UNANSWERED`
+				);
 			} else {
-				console.log(`⚠️ No classification tag found, pattern-based detection: ANSWERED`);
+				console.log(
+					`⚠️ No classification tag found, pattern-based detection: ANSWERED`
+				);
 			}
 		}
 
