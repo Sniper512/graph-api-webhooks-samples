@@ -373,6 +373,11 @@ router.post('/events', auth, async (req, res) => {
    // Get calendar API
    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
    console.log('📅 API: Calendar API initialized');
+   
+   // Get business info for title formatting
+   const Business = require('../models/Business');
+   const businessInfo = await Business.findOne({ user: userId });
+   
    // Get event data from request body
    const { summary, description, start, end, location, attendees } = req.body;
    console.log(`📝 API: Event details - Summary: "${summary}", Start: ${start}, End: ${end}`);
@@ -380,10 +385,20 @@ router.post('/events', auth, async (req, res) => {
      console.log('❌ API: Missing required fields');
      return res.status(400).json({ message: 'Summary, start, and end are required' });
    }
+   
+   // Format title and description
+   const bookingTitle = businessInfo && businessInfo.businessName 
+     ? `Booking with ${businessInfo.businessName} : ${summary}`
+     : `Booking: ${summary}`;
+   
+   const bookingDescription = description 
+     ? `${description}\n\nMeeting was booked with "ginivo.ai"`
+     : 'Meeting was booked with "ginivo.ai"';
+   
    // Create event
    const event = {
-     summary,
-     description,
+     summary: bookingTitle,
+     description: bookingDescription,
      start,
      end,
      location,

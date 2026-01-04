@@ -689,9 +689,17 @@ async function createBooking(
 			}
 		};
 
+		const bookingTitle = businessInfo && businessInfo.businessName 
+			? `Booking with ${businessInfo.businessName} : ${summary}`
+			: `Booking: ${summary}`;
+
+		const bookingDescription = description 
+			? `${description}\n\nMeeting was booked with "ginivo.ai"`
+			: 'Meeting was booked with "ginivo.ai"';
+
 		const event = {
-			summary: `Booking: ${summary}`,
-			description,
+			summary: bookingTitle,
+			description: bookingDescription,
 			start: formatDateTime(start),
 			end: formatDateTime(end),
 			attendees: attendeeEmail
@@ -718,8 +726,8 @@ async function createBooking(
 			senderId,
 			platform,
 			eventId: response.data.id,
-			summary: `Booking: ${summary}`,
-			description,
+			summary: bookingTitle,
+			description: bookingDescription,
 			start: {
 				dateTime: start,
 				timeZone: timezone,
