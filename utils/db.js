@@ -20,8 +20,9 @@ async function connectDB() {
 		const db = await mongoose.connect(process.env.DB_URL, {
 			serverSelectionTimeoutMS: 30000, // 30s timeout for serverless cold starts
 			socketTimeoutMS: 45000,
-			maxPoolSize: 10, // Maintain up to 10 connections in the pool
-			minPoolSize: 2,
+			connectTimeoutMS: 30000, // 30s connection timeout
+			maxPoolSize: 1, // Serverless: use single connection
+			minPoolSize: 0, // Serverless: no minimum pool
 			bufferCommands: false, // Disable buffering to fail fast
 		});
 

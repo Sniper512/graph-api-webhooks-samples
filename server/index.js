@@ -1780,7 +1780,15 @@ app.post("/instagram", async function (req, res) {
 	// Process the message asynchronously
 	try {
 		// Ensure database connection is established
-		await connectDB();
+		try {
+			await connectDB();
+		} catch (dbError) {
+			console.error(
+				"Failed to connect to database, skipping message processing:",
+				dbError.message
+			);
+			return; // Exit early if DB connection fails
+		}
 
 		if (req.body.object === "instagram") {
 			for (const entry of req.body.entry) {
@@ -1880,7 +1888,15 @@ app.post("/whatsapp", async function (req, res) {
 	// Process the message asynchronously
 	try {
 		// Ensure database connection is established
-		await connectDB();
+		try {
+			await connectDB();
+		} catch (dbError) {
+			console.error(
+				"Failed to connect to database, skipping message processing:",
+				dbError.message
+			);
+			return; // Exit early if DB connection fails
+		}
 
 		if (req.body.object === "whatsapp_business_account") {
 			for (const entry of req.body.entry) {
