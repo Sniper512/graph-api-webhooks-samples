@@ -1779,6 +1779,9 @@ app.post("/instagram", async function (req, res) {
 
 	// Process the message asynchronously
 	try {
+		// Ensure database connection is established
+		await connectDB();
+		
 		if (req.body.object === "instagram") {
 			for (const entry of req.body.entry) {
 				if (entry.messaging) {
@@ -1876,6 +1879,9 @@ app.post("/whatsapp", async function (req, res) {
 
 	// Process the message asynchronously
 	try {
+		// Ensure database connection is established
+		await connectDB();
+		
 		if (req.body.object === "whatsapp_business_account") {
 			for (const entry of req.body.entry) {
 				if (entry.changes) {
