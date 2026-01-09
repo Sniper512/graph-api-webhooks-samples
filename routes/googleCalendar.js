@@ -51,13 +51,13 @@ async function refreshAccessTokenIfNeeded(user) {
       console.log('✅ Access token refreshed successfully');
     } catch (error) {
       console.error('❌ Failed to refresh access token:', error);
-      // Mark integration as disconnected if refresh fails
-      user.googleCalendarIntegrationStatus = 'disconnected';
+      // Mark integration as not_connected if refresh fails
+      user.googleCalendarIntegrationStatus = 'not_connected';
       user.googleCalendarAccessToken = null;
       user.googleCalendarRefreshToken = null;
       user.googleCalendarTokenExpiry = null;
       await user.save();
-      console.log('✅ User calendar integration status updated to disconnected');
+      console.log('✅ User calendar integration status updated to not_connected');
       throw new Error('Google Calendar authentication expired. Please reconnect.');
     }
   }
@@ -291,17 +291,17 @@ router.get('/bookings', auth, async (req, res) => {
 
     // Check if it's an authentication error (401 Unauthorized)
     if (error.code === 401 || error.status === 401 || (error.response && error.response.status === 401)) {
-      console.log('🔐 Authentication error detected - updating user calendar status to disconnected');
+      console.log('🔐 Authentication error detected - updating user calendar status to not_connected');
 
       try {
-        // Update user's Google Calendar integration status to disconnected
+        // Update user's Google Calendar integration status to not_connected
         await User.findByIdAndUpdate(userId, {
-          googleCalendarIntegrationStatus: 'disconnected',
+          googleCalendarIntegrationStatus: 'not_connected',
           googleCalendarAccessToken: null,
           googleCalendarRefreshToken: null,
           googleCalendarTokenExpiry: null
         });
-        console.log('✅ User calendar integration status updated to disconnected');
+        console.log('✅ User calendar integration status updated to not_connected');
       } catch (updateError) {
         console.error('❌ Failed to update user calendar status:', updateError);
       }
