@@ -203,8 +203,8 @@ async function refreshAccessTokenIfNeeded(user) {
 				"❌ Failed to refresh Google Calendar access token:",
 				error
 			);
-			// Mark integration as disconnected if refresh fails
-			user.googleCalendarIntegrationStatus = "disconnected";
+			// Mark integration as not_connected if refresh fails
+			user.googleCalendarIntegrationStatus = "not_connected";
 			user.googleCalendarAccessToken = null;
 			user.googleCalendarRefreshToken = null;
 			user.googleCalendarTokenExpiry = null;
