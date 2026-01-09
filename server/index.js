@@ -434,6 +434,17 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 							}
 						}
 
+						// CRITICAL: Filter out past time slots
+						const now = new Date();
+						const isPastSlot = appointmentStart <= now;
+						
+						if (isPastSlot) {
+							console.log(
+								`        ⏰ ${appointmentStartTime}-${appointmentEndTime} is in the past (now: ${now.toISOString()})`
+							);
+							continue;
+						}
+
 						const isAvailable = bookingsInAppointment < maxBookings;
 
 						if (isAvailable) {
