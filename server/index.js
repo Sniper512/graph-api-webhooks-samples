@@ -11,9 +11,12 @@ require("dotenv").config();
 const mongoose = require("mongoose");
 const bodyParser = require("body-parser");
 const express = require("express");
+const http = require("http");
 const cors = require("cors");
+const { Server } = require("socket.io");
 const xhub = require("express-x-hub");
 const axios = require("axios");
+const jwt = require("jsonwebtoken");
 const { connectDB } = require("../utils/db");
 const {
 	sendBookingConfirmation,
@@ -35,13 +38,12 @@ const UnansweredQuestion = require("../models/UnansweredQuestion");
 const { google } = require("googleapis");
 
 const app = express();
+const server = http.createServer(app);
 
 app.set("port", process.env.PORT || 5000);
 
 // Initialize MongoDB connection for serverless
 connectDB().catch((err) => console.error("MongoDB connection error:", err));
-
-app.listen(app.get("port"));
 
 // CORS configuration - allow multiple origins
 const allowedOrigins = [
@@ -52,6 +54,55 @@ const allowedOrigins = [
 	process.env.FRONTEND_URL,
 	process.env.ADMIN_FRONTEND_URL,
 ].filter(Boolean);
+
+// Initialize Socket.io server
+const io = new Server(server, {
+	cors: {
+		origin: allowedOrigins,
+		methods: ["GET", "POST"],
+		credentials: true,
+	},
+});
+
+// Socket.io authentication middleware
+io.use((socket, next) => {
+	const token = socket.handshake.auth.token;
+
+	if (!token) {
+		return next(new Error("Authentication token required"));
+	}
+
+	try {
+		const decoded = jwt.verify(token, process.env.JWT_SECRET);
+		socket.userId = decoded.userId; // Store userId in socket instance
+		next();
+	} catch (error) {
+		console.error("Socket authentication error:", error.message);
+		return next(new Error("Invalid authentication token"));
+	}
+});
+
+// Socket.io connection handler
+io.on("connection", (socket) => {
+	const userId = socket.userId;
+	console.log(`🔌 Socket connected: ${socket.id} (User: ${userId})`);
+
+	// Auto-join user's room (one room per business owner)
+	const roomName = `user:${userId}`;
+	socket.join(roomName);
+	console.log(`📍 User ${userId} joined room: ${roomName}`);
+
+	socket.on("disconnect", (reason) => {
+		console.log(`🔌 Socket disconnected: ${socket.id} (Reason: ${reason})`);
+	});
+
+	socket.on("error", (error) => {
+		console.error(`❌ Socket error for ${socket.id}:`, error);
+	});
+});
+
+// Export io instance for use in message handlers
+module.exports.io = io;
 
 app.use(
 	cors({
@@ -754,6 +805,39 @@ async function createBooking(
 			`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`
 		);
 
+		// Update customer information with booking details
+		try {
+			const Customer = require("../models/Customer");
+			const updateData = {
+				$inc: { totalBookings: 1 },
+				$set: {
+					lastBookingType: summary,
+					lastContactAt: new Date(),
+				},
+			};
+
+			// Add collected info if provided
+			if (attendeeName) {
+				updateData.$set["collectedInfo.name"] = attendeeName;
+				updateData.$set.displayName = attendeeName;
+			}
+			if (attendeeEmail) {
+				updateData.$set["collectedInfo.email"] = attendeeEmail;
+				updateData.$set.email = attendeeEmail;
+			}
+
+			await Customer.findOneAndUpdate({ senderId, userId }, updateData, {
+				upsert: true,
+			});
+			console.log(`\ud83d\udc64 Customer info updated after booking`);
+		} catch (customerError) {
+			console.error(
+				`\u26a0\ufe0f Error updating customer info:`,
+				customerError
+			);
+			// Don't fail the booking if customer update fails
+		}
+
 		// Send booking confirmation email
 		if (attendeeEmail) {
 			try {
@@ -830,6 +914,24 @@ async function cancelBooking(userId, eventId) {
 		if (deletedBooking) {
 			console.log(`💾 Booking deleted from database: ${deletedBooking._id}`);
 
+			// Update customer cancellation count
+			try {
+				const Customer = require("../models/Customer");
+				await Customer.findOneAndUpdate(
+					{ senderId: deletedBooking.senderId, userId },
+					{
+						$inc: { totalCancellations: 1 },
+						$set: { lastContactAt: new Date() },
+					}
+				);
+				console.log(`\ud83d\udc64 Customer cancellation count updated`);
+			} catch (customerError) {
+				console.error(
+					`\u26a0\ufe0f Error updating customer cancellation:`,
+					customerError
+				);
+			}
+
 			// Send cancellation email if attendee exists
 			if (booking && booking.attendees && booking.attendees.length > 0) {
 				const attendee = booking.attendees[0];
@@ -901,6 +1003,35 @@ async function listUserBookings(conversationId, senderId, userId) {
 		return { error: "Failed to list bookings" };
 	}
 }
+
+// Tool function: Update customer preferences
+async function updateCustomerPreferences(senderId, userId, likings) {
+	try {
+		const Customer = require("../models/Customer");
+		console.log(
+			`\ud83d\udccb Updating customer preferences for senderId: ${senderId}`
+		);
+		console.log(`   Likings to add: ${JSON.stringify(likings)}`);
+
+		const customer = await Customer.updatePreferences(
+			senderId,
+			userId,
+			likings
+		);
+
+		console.log(`\u2705 Customer preferences updated successfully`);
+		console.log(`   Total likings now: ${customer.likings.length}`);
+
+		return {
+			success: true,
+			message: "Preferences saved successfully",
+			likings: customer.likings,
+		};
+	} catch (error) {
+		console.error("Error updating customer preferences:", error);
+		return { error: "Failed to update preferences" };
+	}
+}
 // OpenAI API Configuration
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5";
@@ -924,6 +1055,84 @@ async function getOpenAIResponse(
 			userId
 		);
 		const conversationHistory = conversation.getRecentMessages(10);
+
+		// === CUSTOMER RECOGNITION & PERSONALIZATION ===
+		const Customer = require("../models/Customer");
+		const Booking = require("../models/Booking");
+
+		console.log(`\ud83d\udc64 Looking up customer: ${senderId}...`);
+		const customer = await Customer.findOrCreateCustomer(
+			senderId,
+			userId,
+			platform
+		);
+
+		// Update last contact time
+		customer.lastContactAt = new Date();
+		await customer.save();
+
+		// Fetch booking history for this customer
+		const bookingHistory = await Booking.find({
+			senderId,
+			userId,
+			status: "active",
+		})
+			.sort({ createdAt: -1 })
+			.limit(5);
+
+		console.log(`\ud83d\udcca Customer stats:`, {
+			name: customer.displayName || customer.collectedInfo?.name || "Unknown",
+			totalBookings: customer.totalBookings,
+			totalCancellations: customer.totalCancellations,
+			likings: customer.likings,
+			lastBookingType: customer.lastBookingType,
+			pastBookings: bookingHistory.length,
+		});
+
+		// Build customer context for AI
+		let customerContext = "";
+		const customerName = customer.displayName || customer.collectedInfo?.name;
+
+		if (customer.totalBookings > 0 && customerName) {
+			customerContext = `\n\n=== CUSTOMER INFORMATION ===\n`;
+			customerContext += `Customer Name: ${customerName}\n`;
+			customerContext += `Total Bookings: ${customer.totalBookings}\n`;
+			customerContext += `Total Cancellations: ${customer.totalCancellations}\n`;
+
+			if (customer.lastBookingType) {
+				customerContext += `Last Booking: ${customer.lastBookingType}\n`;
+			}
+
+			if (bookingHistory.length > 0) {
+				customerContext += `\nRecent Booking History:\n`;
+				bookingHistory.forEach((booking, index) => {
+					const bookingDate = new Date(
+						booking.start.dateTime || booking.start.date
+					);
+					customerContext += `  ${index + 1}. ${
+						booking.summary
+					} on ${bookingDate.toLocaleDateString()}\n`;
+				});
+			}
+
+			if (customer.likings && customer.likings.length > 0) {
+				customerContext += `\nCustomer Preferences: ${customer.likings.join(
+					", "
+				)}\n`;
+			}
+
+			if (customer.collectedInfo?.email) {
+				customerContext += `Email: ${customer.collectedInfo.email}\n`;
+			}
+
+			customerContext += `\nIMPORTANT: This is a RETURNING customer. Greet them warmly by name!`;
+			if (customer.lastBookingType && bookingHistory.length > 0) {
+				customerContext += ` Mention their previous booking ("${customer.lastBookingType}") and ask if they'd like to book the same service again.`;
+			}
+			customerContext += `\n\n`;
+		} else if (customerName) {
+			customerContext = `\n\n=== CUSTOMER INFORMATION ===\nCustomer Name: ${customerName}\nThis is a returning customer - greet them by name!\n\n`;
+		}
 
 		// Fetch user-specific business information and FAQs from database
 		let businessInfo = "";
@@ -1007,7 +1216,9 @@ OR
 The classification tag MUST be on its own line at the very end. It will be automatically removed before the user sees your message.
 
 ---
-
+` +
+					customerContext +
+					`
 You are a real customer support team member for ${businessName}.` +
 					"You chat with customers the way people talk on Instagram or WhatsApp in real life." +
 					`VOICE & STYLE:
@@ -1249,6 +1460,28 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 					},
 				},
 			},
+			{
+				type: "function",
+				function: {
+					name: "update_customer_preferences",
+					description:
+						"Save customer preferences and likings for future reference. Call this when the user mentions favorite services, preferred appointment times, dislikes, or any preferences they want remembered.",
+					parameters: {
+						type: "object",
+						properties: {
+							likings: {
+								type: "array",
+								items: {
+									type: "string",
+								},
+								description:
+									"Array of customer preferences (e.g., ['gel nails', 'pedicure', 'evening appointments', 'prefers weekends'])",
+							},
+						},
+						required: ["likings"],
+					},
+				},
+			},
 		];
 
 		// Function to make API call and handle responses
@@ -1421,6 +1654,18 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 								bookings.bookings?.length || 0
 							} bookings`
 						);
+					} else if (functionName === "update_customer_preferences") {
+						console.log(
+							`🔧 Executing update_customer_preferences with likings:`,
+							functionArgs.likings
+						);
+						const preferencesResult = await updateCustomerPreferences(
+							senderId,
+							userId,
+							functionArgs.likings
+						);
+						toolResult = JSON.stringify(preferencesResult);
+						console.log(`💾 Customer preferences updated:`, preferencesResult);
 					} else {
 						toolResult = JSON.stringify({ error: "Unknown function" });
 					}
@@ -1516,6 +1761,48 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 		// Save both messages to database
 		await conversation.addMessage("user", userMessage);
 		await conversation.addMessage("assistant", aiResponse);
+
+		// Emit Socket.io events for real-time updates
+		try {
+			const { io } = require("./index");
+			const roomName = `user:${userId}`;
+
+			// Emit new message event to the business owner's room
+			io.to(roomName).emit("new-message", {
+				conversationId: conversation._id.toString(),
+				senderId: senderId,
+				platform: platform,
+				messages: [
+					{
+						_id: new Date().getTime() + "-user",
+						role: "user",
+						content: userMessage,
+						timestamp: new Date(),
+					},
+					{
+						_id: new Date().getTime() + "-assistant",
+						role: "assistant",
+						content: aiResponse,
+						timestamp: new Date(),
+					},
+				],
+			});
+
+			// Emit conversation updated event
+			io.to(roomName).emit("conversation-updated", {
+				conversationId: conversation._id.toString(),
+				lastMessage: aiResponse,
+				lastMessageAt: new Date(),
+			});
+
+			console.log(`\ud83d\udce1 Socket.io events emitted to room: ${roomName}`);
+		} catch (socketError) {
+			console.error(
+				`\u26a0\ufe0f Error emitting socket events:`,
+				socketError.message
+			);
+			// Don't fail the response if socket emit fails
+		}
 
 		// Save to unanswered questions if classified as such
 		if (isUnanswered) {
@@ -1972,13 +2259,12 @@ app.post("/whatsapp", async function (req, res) {
 	}
 });
 
-// For local development
-if (process.env.NODE_ENV !== "production") {
-	const PORT = app.get("port");
-	app.listen(PORT, function () {
-		console.log(`Node app is running on port ${PORT}`);
-	});
-}
+// Start server (works for both Heroku and local development)
+const PORT = app.get("port");
+server.listen(PORT, function () {
+	console.log(`🚀 Node app is running on port ${PORT}`);
+	console.log(`🔌 Socket.io server is ready`);
+});
 
-// Export for Vercel serverless
+// Export for compatibility
 module.exports = app;
