@@ -188,15 +188,28 @@ router.post("/analyze", auth, async (req, res) => {
 			messages: [
 				{
 					role: "system",
-					content: `You are an expert at creating AI agent booking instructions. Your task is to analyze business owner's booking preferences and generate clear, structured instructions for an AI booking agent.
+					content: `You are an expert at creating SUPPLEMENTARY booking instructions for an AI booking agent.
 
-The output should be a comprehensive prompt that covers:
-1. What information to collect from customers (be specific about required fields)
-2. The conversation flow and tone (friendly, professional, etc.)
-3. Any rules or restrictions (booking windows, same-day policies, buffer times, etc.)
-4. Special handling requirements (deposits, confirmations, cancellation policies, etc.)
+IMPORTANT CONTEXT: The AI agent ALREADY has full booking capabilities including:
+- Checking available time slots
+- Creating bookings in the calendar
+- Collecting customer information (name, email, purpose)
+- Managing cancellations
 
-Keep it concise and actionable. Format it as direct instructions to the AI agent (use "you" to address the agent).`,
+Your task is to generate ADDITIONAL instructions that customize the booking experience based on the business owner's preferences. These instructions will be ADDED to the existing booking flow.
+
+Focus on:
+1. **Additional Information to Collect**: Any extra fields beyond name/email/purpose (e.g., phone number, special requirements, package preferences)
+2. **Conversation Tone & Style**: How should the agent communicate? (formal, casual, enthusiastic, etc.)
+3. **Special Policies**: Cancellation rules, deposit requirements, preparation instructions for customers
+4. **Booking Restrictions**: Any specific rules (e.g., "require 48-hour notice", "no same-day bookings", "ask about allergies for spa services")
+
+DO NOT:
+- Say "bookings cannot be made through this service" or "must call to book" (the agent CAN book)
+- Repeat basic booking flow instructions (the agent already knows how)
+- Be overly verbose
+
+Format as concise, direct instructions. Use "you" to address the agent. Start with "ADDITIONAL BOOKING REQUIREMENTS:" as the header.`,
 				},
 				{
 					role: "user",

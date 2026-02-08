@@ -1697,8 +1697,7 @@ User: "I'd like to book a haircut"
 ---
 
 ` +
-					(bookingInstructions ||
-						`BOOKINGS (VERY IMPORTANT – FOLLOW EXACTLY):
+					`BOOKINGS (VERY IMPORTANT – FOLLOW EXACTLY):
 
 If a user shows interest in booking, scheduling, or reserving:
 
@@ -1749,7 +1748,9 @@ If booking fails:
 - Immediately check availability again
 - Offer new options
 
-Never claim a booking is confirmed unless create_booking succeeds.`) +
+Never claim a booking is confirmed unless create_booking succeeds.
+` +
+					(bookingInstructions ? `\n${bookingInstructions}\n` : "") +
 					customFieldsInstructions +
 					`
 
