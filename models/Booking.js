@@ -64,6 +64,22 @@ const bookingSchema = new mongoose.Schema({
       default: 'needsAction'
     }
   }],
+  // Staff and Service references (optional for backward compatibility)
+  staffMember: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'StaffMember',
+    index: true
+  },
+  service: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Service',
+    index: true
+  },
+  // Custom fields collected during booking (for BookingConfig feature)
+  customFields: {
+    type: Map,
+    of: String
+  },
   status: {
     type: String,
     enum: ['active', 'cancelled'],

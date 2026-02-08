@@ -31,6 +31,8 @@ const faqRoutes = require("../routes/faqs");
 const adminRoutes = require("../routes/admin");
 const timeSlotRoutes = require("../routes/timeslots");
 const googleCalendarRoutes = require("../routes/googleCalendar");
+const staffRoutes = require("../routes/staff");
+const servicesRoutes = require("../routes/services");
 
 // Import models
 const Conversation = require("../models/Conversation");
@@ -161,6 +163,12 @@ app.use("/api/timeslots", timeSlotRoutes);
 // Mount Google Calendar routes
 app.use("/api/google-calendar", googleCalendarRoutes);
 
+// Mount staff routes
+app.use("/api/staff", staffRoutes);
+
+// Mount services routes
+app.use("/api/services", servicesRoutes);
+
 var token = process.env.TOKEN || "token";
 var received_updates = [];
 
@@ -217,6 +225,42 @@ async function refreshAccessTokenIfNeeded(user) {
 	return user.googleCalendarAccessToken;
 }
 
+// Helper function to refresh staff member's Google Calendar access token if needed
+async function refreshStaffAccessToken(staffMember) {
+	const now = new Date();
+	if (staffMember.googleCalendarTokenExpiry && staffMember.googleCalendarTokenExpiry <= now) {
+		try {
+			const oauth2Client = new google.auth.OAuth2(
+				process.env.GOOGLE_CALENDAR_CLIENT_ID,
+				process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+				getGoogleCalendarRedirectUri()
+			);
+			oauth2Client.setCredentials({
+				refresh_token: staffMember.googleCalendarRefreshToken,
+			});
+			const { credentials } = await oauth2Client.refreshAccessToken();
+			staffMember.googleCalendarAccessToken = credentials.access_token;
+			staffMember.googleCalendarTokenExpiry = new Date(credentials.expiry_date);
+			await staffMember.save();
+		} catch (error) {
+			console.error(
+				`❌ Failed to refresh Google Calendar access token for staff ${staffMember.name}:`,
+				error
+			);
+			// Mark integration as not_connected if refresh fails
+			staffMember.googleCalendarIntegrationStatus = "not_connected";
+			staffMember.googleCalendarAccessToken = null;
+			staffMember.googleCalendarRefreshToken = null;
+			staffMember.googleCalendarTokenExpiry = null;
+			await staffMember.save();
+			throw new Error(
+				`Google Calendar authentication expired for ${staffMember.name}. Please reconnect.`
+			);
+		}
+	}
+	return staffMember.googleCalendarAccessToken;
+}
+
 // Helper function to generate proper date ranges for booking
 function generateBookingDateRange() {
 	const today = new Date();
@@ -236,10 +280,10 @@ function generateBookingDateRange() {
 		endDate: formatISODate(endDate),
 	};
 }
-async function getAvailableBookingSlots(userId, startDate, endDate) {
+async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = null, staffMemberId = null) {
 	try {
 		console.log(
-			`🔍 Getting available slots for user ${userId}, dates: ${startDate} to ${endDate}`
+			`🔍 Getting available slots for user ${userId}, dates: ${startDate} to ${endDate}${serviceId ? `, service: ${serviceId}` : ''}${staffMemberId ? `, staff: ${staffMemberId}` : ''}`
 		);
 		const Business = require("../models/Business");
 		const business = await Business.findOne({ user: userId });
@@ -247,10 +291,55 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 		if (!business) return { availableSlots: [] };
 
 		const TimeSlot = require("../models/TimeSlot");
-		const timeSlots = await TimeSlot.find({
+		const StaffMember = require("../models/StaffMember");
+		const Service = require("../models/Service");
+		
+		// If serviceId is provided, get all active staff members assigned to that service
+		let staffMembers = [];
+		if (serviceId) {
+			const service = await Service.findOne({ _id: serviceId, business: business._id, isActive: true });
+			if (!service) {
+				console.log(`❌ Service ${serviceId} not found or inactive`);
+				return { availableSlots: [] };
+			}
+			
+			staffMembers = await StaffMember.find({
+				_id: { $in: service.staffMembers },
+				business: business._id,
+				isActive: true
+			});
+			console.log(`👥 Found ${staffMembers.length} active staff members for service ${service.name}`);
+			
+			if (staffMembers.length === 0) {
+				console.log(`❌ No active staff members assigned to service ${service.name}`);
+				return { availableSlots: [] };
+			}
+		} else if (staffMemberId) {
+			// If specific staff member requested, load only that one
+			const staff = await StaffMember.findOne({ _id: staffMemberId, business: business._id, isActive: true });
+			if (!staff) {
+				console.log(`❌ Staff member ${staffMemberId} not found or inactive`);
+				return { availableSlots: [] };
+			}
+			staffMembers = [staff];
+			console.log(`👤 Loading slots for staff member: ${staff.name}`);
+		}
+		
+		// Query time slots - if staff filtering is enabled, query per-staff schedules
+		const timeSlotQuery = {
 			business: business._id,
 			isActive: true,
-		});
+		};
+		
+		if (staffMembers.length > 0) {
+			// Query per-staff schedules for the specified staff members
+			timeSlotQuery.staffMember = { $in: staffMembers.map(s => s._id) };
+		} else {
+			// Query business-level schedules only (staffMember: null)
+			timeSlotQuery.staffMember = null;
+		}
+		
+		const timeSlots = await TimeSlot.find(timeSlotQuery);
 		console.log(`⏰ Time slots found: ${timeSlots.length}`);
 
 		const User = require("../models/User");
@@ -265,8 +354,67 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 		console.log(`🌍 Business timezone: ${businessTimezone}`);
 
 		let bookings = [];
-		if (user && user.googleCalendarIntegrationStatus === "connected") {
-			console.log(`📅 Fetching existing bookings from Google Calendar...`);
+		
+		// Query Google Calendar using business timezone
+		// Get midnight of start date and end of end date in business timezone
+		const startDateObj = new Date(startDate + "T00:00:00");
+		const endDateObj = new Date(endDate + "T23:59:59");
+		
+		// Format as ISO strings (Google Calendar handles timezone conversion)
+		const timeMin = startDateObj.toISOString();
+		const timeMax = endDateObj.toISOString();
+		console.log(
+			`📅 Calendar query range: ${timeMin} to ${timeMax} (${businessTimezone})`
+		);
+		
+		if (staffMembers.length > 0) {
+			// Query each staff member's Google Calendar
+			console.log(`📅 Fetching bookings from ${staffMembers.length} staff calendars...`);
+			for (const staff of staffMembers) {
+				if (staff.googleCalendarIntegrationStatus === 'connected') {
+					try {
+						const staffAccessToken = await refreshStaffAccessToken(staff);
+						const staffOAuth2Client = new google.auth.OAuth2(
+							process.env.GOOGLE_CALENDAR_CLIENT_ID,
+							process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+							process.env.GOOGLE_CALENDAR_REDIRECT_URI
+						);
+						staffOAuth2Client.setCredentials({ access_token: staffAccessToken });
+						const staffCalendar = google.calendar({ version: "v3", auth: staffOAuth2Client });
+						
+						const response = await staffCalendar.events.list({
+							calendarId: "primary",
+							timeMin,
+							timeMax,
+							singleEvents: true,
+							orderBy: "startTime",
+						});
+						
+						const staffBookings = response.data.items.filter((event) => {
+							const summary = (event.summary || "").toLowerCase();
+							const description = (event.description || "").toLowerCase();
+							return summary.includes("booking") || description.includes("booking");
+						});
+						
+						// Add staff ID to each booking for identification
+						staffBookings.forEach(booking => {
+							booking._staffId = staff._id.toString();
+							booking._staffName = staff.name;
+						});
+						
+						bookings.push(...staffBookings);
+						console.log(`📅 Staff ${staff.name}: ${staffBookings.length} bookings found`);
+					} catch (err) {
+						console.error(`❌ Error fetching calendar for staff ${staff.name}:`, err.message);
+					}
+				} else {
+					console.log(`⚠️  Staff ${staff.name} calendar not connected, skipping`);
+				}
+			}
+			console.log(`📅 Total bookings from all staff: ${bookings.length}`);
+		} else if (user && user.googleCalendarIntegrationStatus === "connected") {
+			// Query business owner's Google Calendar (no staff filtering)
+			console.log(`📅 Fetching existing bookings from business owner's Google Calendar...`);
 			const accessToken = await refreshAccessTokenIfNeeded(user);
 			const oauth2Client = new google.auth.OAuth2(
 				process.env.GOOGLE_CALENDAR_CLIENT_ID,
@@ -275,18 +423,6 @@ async function getAvailableBookingSlots(userId, startDate, endDate) {
 			);
 			oauth2Client.setCredentials({ access_token: accessToken });
 			const calendar = google.calendar({ version: "v3", auth: oauth2Client });
-
-			// Query Google Calendar using business timezone
-			// Get midnight of start date and end of end date in business timezone
-			const startDateObj = new Date(startDate + "T00:00:00");
-			const endDateObj = new Date(endDate + "T23:59:59");
-
-			// Format as ISO strings (Google Calendar handles timezone conversion)
-			const timeMin = startDateObj.toISOString();
-			const timeMax = endDateObj.toISOString();
-			console.log(
-				`📅 Calendar query range: ${timeMin} to ${timeMax} (${businessTimezone})`
-			);
 
 			const response = await calendar.events.list({
 				calendarId: "primary",
@@ -506,7 +642,9 @@ async function createBooking(
 	end,
 	description,
 	attendeeEmail,
-	attendeeName
+	attendeeName,
+	staffMemberId = null,
+	serviceId = null
 ) {
 	try {
 		console.log(`\n🎯 ========== CREATE BOOKING CALLED ==========`);
@@ -515,26 +653,50 @@ async function createBooking(
 		console.log(`⏰ End: ${end}`);
 		console.log(`📝 Description: ${description}`);
 		console.log(`👤 Attendee: ${attendeeName} (${attendeeEmail})`);
+		if (staffMemberId) console.log(`👥 Staff Member ID: ${staffMemberId}`);
+		if (serviceId) console.log(`🛠️  Service ID: ${serviceId}`);
 		console.log(`🎯 ============================================\n`);
 
 		const User = require("../models/User");
 		const Booking = require("../models/Booking");
 		const TimeSlot = require("../models/TimeSlot");
 		const Business = require("../models/Business");
+		const StaffMember = require("../models/StaffMember");
 
-		const user = await User.findById(userId);
-		if (!user || user.googleCalendarIntegrationStatus !== "connected") {
-			return { error: "Google Calendar not connected" };
+		// Determine which calendar to use - staff or business owner
+		let calendarOwner, calendarOwnerName, accessToken, oauth2Client, calendar;
+		
+		if (staffMemberId) {
+			// Use staff member's calendar
+			const staff = await StaffMember.findById(staffMemberId);
+			if (!staff || staff.googleCalendarIntegrationStatus !== "connected") {
+				return { error: `Staff member's Google Calendar not connected` };
+			}
+			
+			calendarOwner = staff;
+			calendarOwnerName = staff.name;
+			accessToken = await refreshStaffAccessToken(staff);
+			console.log(`📅 Using staff member's calendar: ${staff.name}`);
+		} else {
+			// Use business owner's calendar
+			const user = await User.findById(userId);
+			if (!user || user.googleCalendarIntegrationStatus !== "connected") {
+				return { error: "Google Calendar not connected" };
+			}
+			
+			calendarOwner = user;
+			calendarOwnerName = "Business Owner";
+			accessToken = await refreshAccessTokenIfNeeded(user);
+			console.log(`📅 Using business owner's calendar`);
 		}
-
-		const accessToken = await refreshAccessTokenIfNeeded(user);
-		const oauth2Client = new google.auth.OAuth2(
+		
+		oauth2Client = new google.auth.OAuth2(
 			process.env.GOOGLE_CALENDAR_CLIENT_ID,
 			process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
 			process.env.GOOGLE_CALENDAR_REDIRECT_URI
 		);
 		oauth2Client.setCredentials({ access_token: accessToken });
-		const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+		calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
 		// Get business timezone (or use Google Calendar timezone as fallback)
 		const businessInfo = await Business.findOne({ user: userId });
@@ -752,10 +914,29 @@ async function createBooking(
 			}
 		};
 
-		const bookingTitle =
-			businessInfo && businessInfo.businessName
-				? `Booking with ${businessInfo.businessName} : ${summary}`
-				: `Booking: ${summary}`;
+		// Build booking title with service and staff information
+		let bookingTitle = summary;
+		
+		// Add service name if provided
+		if (serviceId) {
+			const Service = require("../models/Service");
+			const service = await Service.findById(serviceId);
+			if (service) {
+				bookingTitle = `${service.name}: ${summary}`;
+			}
+		}
+		
+		// Add staff name if provided
+		if (staffMemberId && calendarOwner) {
+			bookingTitle = `${bookingTitle} (with ${calendarOwner.name})`;
+		}
+		
+		// Add business name prefix
+		if (businessInfo && businessInfo.businessName) {
+			bookingTitle = `Booking with ${businessInfo.businessName} - ${bookingTitle}`;
+		} else {
+			bookingTitle = `Booking: ${bookingTitle}`;
+		}
 
 		const bookingDescription = description
 			? `${description}\n\nMeeting was booked with "ginivo.ai"`
@@ -784,7 +965,7 @@ async function createBooking(
 		});
 
 		// Save booking to database
-		const booking = new Booking({
+		const bookingData = {
 			userId,
 			conversationId,
 			senderId,
@@ -809,7 +990,17 @@ async function createBooking(
 						},
 				  ]
 				: [],
-		});
+		};
+		
+		// Add staff member and service references if provided
+		if (staffMemberId) {
+			bookingData.staffMember = staffMemberId;
+		}
+		if (serviceId) {
+			bookingData.service = serviceId;
+		}
+		
+		const booking = new Booking(bookingData);
 
 		await booking.save();
 		console.log(
@@ -984,6 +1175,55 @@ async function cancelBooking(userId, eventId) {
 		return { error: "Failed to cancel booking" };
 	}
 }
+
+// Get active services for booking
+async function getServices(userId) {
+	try {
+		console.log(`🛠️  Getting services for user ${userId}`);
+		const Business = require("../models/Business");
+		const Service = require("../models/Service");
+		const StaffMember = require("../models/StaffMember");
+		
+		const business = await Business.findOne({ user: userId });
+		if (!business) {
+			return { services: [] };
+		}
+		
+		// Get all active services with populated staff members
+		const services = await Service.find({
+			business: business._id,
+			isActive: true
+		}).populate({
+			path: 'staffMembers',
+			match: { isActive: true },
+			select: 'name email role googleCalendarIntegrationStatus'
+		});
+		
+		// Format services for AI response
+		const formattedServices = services.map(service => ({
+			id: service._id,
+			name: service.name,
+			description: service.description,
+			duration: service.duration,
+			price: service.price,
+			currency: service.currency,
+			category: service.category,
+			staffMembers: service.staffMembers.map(staff => ({
+				id: staff._id,
+				name: staff.name,
+				role: staff.role,
+				calendarConnected: staff.googleCalendarIntegrationStatus === 'connected'
+			}))
+		}));
+		
+		console.log(`🛠️  Found ${formattedServices.length} active services`);
+		return { services: formattedServices };
+	} catch (error) {
+		console.error("❌ Error getting services:", error);
+		return { error: error.message, services: [] };
+	}
+}
+
 async function listUserBookings(conversationId, senderId, userId) {
 	try {
 		const Booking = require("../models/Booking");
@@ -1267,6 +1507,33 @@ User: Hi
 Assistant: Hey! What can I help you with?
 
 ` +
+					`SERVICES & STAFF MEMBERS:
+
+When a user asks about available services or what you offer:
+1) Call get_services to retrieve the list of available services
+2) Present services naturally with relevant details (name, description, duration, price)
+3) If the user asks about specific staff members for a service, mention which staff provide that service
+4) Each staff member may have their own calendar and availability
+
+BOOKING WITH SERVICES & STAFF:
+
+When booking a specific service:
+1) First call get_services to get the serviceId and see which staff members provide it
+2) When calling get_available_booking_slots, include the serviceId parameter to see slots from staff who provide that service
+3) When the user selects a time slot, note which staff member that slot is from (_staffId and _staffName in the response)
+4) When calling create_booking, include both staffMemberId and serviceId parameters to ensure the booking goes to the correct staff member's calendar
+
+Example booking flow with services:
+User: "I'd like to book a haircut"
+1) Call get_services → find "Haircut" service and its serviceId
+2) Call get_available_booking_slots with serviceId → get slots from staff who do haircuts
+3) Show slots: "• Monday 2PM with Sarah • Tuesday 10AM with John"
+4) User picks: "Monday 2PM"
+5) Call create_booking with staffMemberId (Sarah's ID) and serviceId
+
+---
+
+` +
 					`BOOKINGS (VERY IMPORTANT – FOLLOW EXACTLY):
 
 If a user shows interest in booking, scheduling, or reserving:
@@ -1389,7 +1656,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 				function: {
 					name: "get_available_booking_slots",
 					description:
-						"Get available time slots for booking appointments with the business",
+						"Get available time slots for booking appointments with the business. When a serviceId is provided, returns slots only from staff members assigned to that service.",
 					parameters: {
 						type: "object",
 						properties: {
@@ -1400,6 +1667,14 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							endDate: {
 								type: "string",
 								description: "End date in YYYY-MM-DD format",
+							},
+							serviceId: {
+								type: "string",
+								description: "Optional: Service ID from get_services. When provided, returns slots from staff assigned to this service.",
+							},
+							staffMemberId: {
+								type: "string",
+								description: "Optional: Specific staff member ID. When provided, returns slots only from that staff member.",
 							},
 						},
 						required: ["startDate", "endDate"],
@@ -1440,6 +1715,14 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							attendeeName: {
 								type: "string",
 								description: "Name of the person booking",
+							},
+							staffMemberId: {
+								type: "string",
+								description: "Optional: Staff member ID from get_available_booking_slots response. Required when booking with specific staff.",
+							},
+							serviceId: {
+								type: "string",
+								description: "Optional: Service ID from get_services. Recommended to include when booking a specific service.",
 							},
 						},
 						required: ["summary", "start", "end"],
@@ -1499,36 +1782,41 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 					},
 				},
 			},
-		];
+		{
+			type: "function",
+			function: {
+				name: "get_services",
+				description:
+					"Get list of available services offered by the business. Call this when user asks about services, or mentions wanting a specific type of service. Returns service details including assigned staff members.",
+				parameters: {
+					type: "object",
+					properties: {},
+					required: [],
+				},
+			},
+		},
+	];
 
-		// Function to make API call and handle responses
-		async function makeOpenAICall(msgs, toolCalls = null) {
-			const requestBody = {
-				model: OPENAI_MODEL,
-				messages: msgs,
-				max_completion_tokens: 500,
-			};
-
-			// Add tools only if not in a function call response
-			if (!toolCalls) {
-				requestBody.tools = tools;
+	// Helper function to make OpenAI API call
+	async function makeOpenAICall(messages) {
+		const response = await axios.post(
+			"https://api.openai.com/v1/chat/completions",
+			{
+				model: "gpt-4o",
+				messages: messages,
+				tools: tools,
+			},
+			{
+				headers: {
+					Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+					"Content-Type": "application/json",
+				},
 			}
+		);
+		return response.data;
+	}
 
-			const response = await axios.post(
-				"https://api.openai.com/v1/chat/completions",
-				requestBody,
-				{
-					headers: {
-						Authorization: `Bearer ${OPENAI_API_KEY}`,
-						"Content-Type": "application/json",
-					},
-				}
-			);
-
-			return response.data;
-		}
-
-		// Make initial API call
+	// Make initial API call
 		let response = await makeOpenAICall(messages);
 		let aiResponse = "";
 		let maxToolCalls = 3; // Prevent infinite loops
@@ -1627,7 +1915,9 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 						const slots = await getAvailableBookingSlots(
 							userId,
 							startDate,
-							endDate
+							endDate,
+							functionArgs.serviceId,
+							functionArgs.staffMemberId
 						);
 						toolResult = JSON.stringify(slots);
 						console.log(`📅 Available slots result:`, slots);
@@ -1642,7 +1932,9 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							functionArgs.end,
 							functionArgs.description || "",
 							functionArgs.attendeeEmail,
-							functionArgs.attendeeName
+							functionArgs.attendeeName,
+							functionArgs.staffMemberId,
+							functionArgs.serviceId
 						);
 						toolResult = JSON.stringify(booking);
 					} else if (functionName === "cancel_booking") {
@@ -1683,6 +1975,15 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 						);
 						toolResult = JSON.stringify(preferencesResult);
 						console.log(`💾 Customer preferences updated:`, preferencesResult);
+					} else if (functionName === "get_services") {
+						console.log(`🔧 Executing get_services for business ${userId}`);
+						const services = await getServices(userId);
+						toolResult = JSON.stringify(services);
+						console.log(
+							`📋 Services result: ${
+								services.services?.length || 0
+							} services found`
+						);
 					} else {
 						toolResult = JSON.stringify({ error: "Unknown function" });
 					}

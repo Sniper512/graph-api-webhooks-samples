@@ -7,6 +7,12 @@ const timeSlotSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  // Optional staff member reference (null = business-level schedule)
+  staffMember: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'StaffMember',
+    index: true
+  },
   // Day of the week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
   dayOfWeek: {
     type: Number,
@@ -154,8 +160,8 @@ const timeSlotSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Compound index for efficient queries
-timeSlotSchema.index({ business: 1, dayOfWeek: 1 });
+// Compound index for efficient queries (supports both business-level and per-staff schedules)
+timeSlotSchema.index({ business: 1, staffMember: 1, dayOfWeek: 1 });
 timeSlotSchema.index({ business: 1, 'dateOverrides.date': 1 });
 
 // Validate that end time is after start time
