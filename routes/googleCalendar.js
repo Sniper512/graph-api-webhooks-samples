@@ -146,137 +146,7 @@ router.get("/auth/staff/:linkToken", async (req, res) => {
 	}
 });
 
-// Callback route for staff Google OAuth
-router.get("/auth/staff/callback", async (req, res) => {
-	const { code, state } = req.query;
-
-	try {
-		console.log("🔄 Staff OAuth Callback: Exchanging code for tokens...");
-
-		// Exchange authorization code for tokens
-		const { tokens } = await oauth2Client.getToken(code);
-		oauth2Client.setCredentials(tokens);
-
-		console.log("✅ Staff OAuth Callback: Tokens exchanged successfully");
-
-		// Parse the state parameter
-		const stateData = JSON.parse(state);
-
-		if (stateData.type !== "staff" || !stateData.staffId) {
-			console.log("❌ Staff OAuth Callback: Invalid state data");
-			return res.status(400).send("Invalid OAuth state");
-		}
-
-		const StaffMember = require("../models/StaffMember");
-		const staffMember = await StaffMember.findById(stateData.staffId);
-
-		if (!staffMember) {
-			console.log("❌ Staff OAuth Callback: Staff member not found");
-			return res.status(404).send("Staff member not found");
-		}
-
-		console.log(
-			"✅ Staff OAuth Callback: Staff member found:",
-			staffMember.email,
-		);
-
-		// Fetch user info to get email
-		try {
-			const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
-			const userInfo = await oauth2.userinfo.get();
-			staffMember.googleCalendarEmail = userInfo.data.email;
-			console.log("✅ Google Calendar email fetched:", userInfo.data.email);
-		} catch (emailError) {
-			console.error("⚠️ Failed to fetch Google email:", emailError);
-		}
-
-		// Save tokens to staff member
-		staffMember.googleCalendarAccessToken = tokens.access_token;
-		staffMember.googleCalendarRefreshToken = tokens.refresh_token;
-		staffMember.googleCalendarTokenExpiry = new Date(tokens.expiry_date);
-		staffMember.googleCalendarIntegrationStatus = "connected";
-
-		// Invalidate the calendar link token (one-time use)
-		staffMember.invalidateCalendarLink();
-
-		await staffMember.save();
-
-		console.log(
-			`✅ Staff OAuth Callback: Tokens saved for ${staffMember.name}`,
-		);
-
-		// Redirect to a success page
-		res.send(`
-			<!DOCTYPE html>
-			<html>
-			<head>
-				<title>Calendar Connected</title>
-				<style>
-					body { 
-						font-family: system-ui, -apple-system, sans-serif; 
-						display: flex; 
-						justify-content: center; 
-						align-items: center; 
-						height: 100vh; 
-						margin: 0;
-						background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-					}
-					.container { 
-						background: white; 
-						padding: 3rem; 
-						border-radius: 12px; 
-						box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-						text-align: center;
-						max-width: 500px;
-					}
-					.success-icon {
-						width: 80px;
-						height: 80px;
-						margin: 0 auto 1.5rem;
-						background: #10b981;
-						border-radius: 50%;
-						display: flex;
-						align-items: center;
-						justify-content: center;
-						font-size: 3rem;
-					}
-					h1 { 
-						color: #1f2937; 
-						margin: 0 0 1rem 0;
-						font-size: 1.875rem;
-					}
-					p { 
-						color: #6b7280; 
-						margin: 0 0 1.5rem 0;
-						font-size: 1.125rem;
-					}
-					.email {
-						background: #f3f4f6;
-						padding: 0.5rem 1rem;
-						border-radius: 6px;
-						font-family: monospace;
-						color: #374151;
-					}
-				</style>
-			</head>
-			<body>
-				<div class="container">
-					<div class="success-icon">✓</div>
-					<h1>Calendar Connected Successfully!</h1>
-					<p>Your Google Calendar has been connected.</p>
-					<p class="email">${staffMember.googleCalendarEmail}</p>
-					<p style="margin-top: 2rem; font-size: 0.875rem;">You can close this tab now.</p>
-				</div>
-			</body>
-			</html>
-		`);
-	} catch (error) {
-		console.error("❌ Staff OAuth Callback Error:", error);
-		res.status(500).send("Failed to complete Google Calendar connection");
-	}
-});
-
-// Callback route to handle Google OAuth response
+// Unified callback route to handle both staff and user Google OAuth
 router.get("/auth/google/callback", async (req, res) => {
 	const { code, state } = req.query;
 
@@ -289,51 +159,172 @@ router.get("/auth/google/callback", async (req, res) => {
 
 		console.log("✅ Google OAuth Callback: Tokens exchanged successfully");
 
-		// Extract user ID from the state parameter
-		const userId = state;
-
-		if (!userId) {
-			console.log("❌ Google OAuth Callback: User ID not found in state");
-			return res.status(400).send("User ID not found in state");
-		}
-
-		console.log("🔄 Google OAuth Callback: Finding user by ID...");
-
-		// Find the user by ID and save the tokens
-		const user = await User.findById(userId);
-
-		if (!user) {
-			console.log("❌ Google OAuth Callback: User not found");
-			return res.status(404).send("User not found");
-		}
-
-		console.log("✅ Google OAuth Callback: User found:", user.email);
-
-		console.log("🔄 Google OAuth Callback: Saving tokens to user record...");
-
-		// Fetch user info to get email
+		// Try to parse state as JSON (staff OAuth) or use as string (user OAuth)
+		let stateData;
 		try {
-			const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
-			const userInfo = await oauth2.userinfo.get();
-			user.googleCalendarEmail = userInfo.data.email;
-			console.log("✅ Google Calendar email fetched:", userInfo.data.email);
-		} catch (emailError) {
-			console.error("⚠️ Failed to fetch Google email:", emailError);
-			// Continue even if email fetch fails
+			stateData = JSON.parse(state);
+		} catch {
+			// Not JSON, treat as user ID (user OAuth)
+			stateData = { type: "user", userId: state };
 		}
 
-		user.googleCalendarAccessToken = tokens.access_token;
-		user.googleCalendarRefreshToken = tokens.refresh_token;
-		user.googleCalendarTokenExpiry = new Date(tokens.expiry_date);
-		user.googleCalendarIntegrationStatus = "connected";
+		// Handle Staff OAuth
+		if (stateData.type === "staff" && stateData.staffId) {
+			console.log("🔄 Staff OAuth: Processing staff authentication...");
 
-		await user.save();
+			const StaffMember = require("../models/StaffMember");
+			const staffMember = await StaffMember.findById(stateData.staffId);
 
-		console.log("✅ Google OAuth Callback: Tokens saved to user record");
+			if (!staffMember) {
+				console.log("❌ Staff OAuth: Staff member not found");
+				return res.status(404).send("Staff member not found");
+			}
 
-		// Redirect the user to the bookings page
-		console.log("🔄 Google OAuth Callback: Redirecting to bookings page...");
-		res.redirect(getFrontendRedirectUrl("/bookings"));
+			console.log(
+				"✅ Staff OAuth: Staff member found:",
+				staffMember.email,
+			);
+
+			// Fetch user info to get email
+			try {
+				const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
+				const userInfo = await oauth2.userinfo.get();
+				staffMember.googleCalendarEmail = userInfo.data.email;
+				console.log("✅ Google Calendar email fetched:", userInfo.data.email);
+			} catch (emailError) {
+				console.error("⚠️ Failed to fetch Google email:", emailError);
+			}
+
+			// Save tokens to staff member
+			staffMember.googleCalendarAccessToken = tokens.access_token;
+			staffMember.googleCalendarRefreshToken = tokens.refresh_token;
+			staffMember.googleCalendarTokenExpiry = new Date(tokens.expiry_date);
+			staffMember.googleCalendarIntegrationStatus = "connected";
+
+			// Invalidate the calendar link token (one-time use)
+			staffMember.invalidateCalendarLink();
+
+			await staffMember.save();
+
+			console.log(
+				`✅ Staff OAuth: Tokens saved for ${staffMember.name}`,
+			);
+
+			// Redirect to a success page
+			return res.send(`
+				<!DOCTYPE html>
+				<html>
+				<head>
+					<title>Calendar Connected</title>
+					<style>
+						body {
+							font-family: system-ui, -apple-system, sans-serif;
+							display: flex;
+							justify-content: center;
+							align-items: center;
+							height: 100vh;
+							margin: 0;
+							background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+						}
+						.container {
+							background: white;
+							padding: 3rem;
+							border-radius: 12px;
+							box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+							text-align: center;
+							max-width: 500px;
+						}
+						.success-icon {
+							width: 80px;
+							height: 80px;
+							margin: 0 auto 1.5rem;
+							background: #10b981;
+							border-radius: 50%;
+							display: flex;
+							align-items: center;
+							justify-content: center;
+							font-size: 3rem;
+						}
+						h1 {
+							color: #1f2937;
+							margin: 0 0 1rem 0;
+							font-size: 1.875rem;
+						}
+						p {
+							color: #6b7280;
+							margin: 0 0 1.5rem 0;
+							font-size: 1.125rem;
+						}
+						.email {
+							background: #f3f4f6;
+							padding: 0.5rem 1rem;
+							border-radius: 6px;
+							font-family: monospace;
+							color: #374151;
+						}
+					</style>
+				</head>
+				<body>
+					<div class="container">
+						<div class="success-icon">✓</div>
+						<h1>Calendar Connected Successfully!</h1>
+						<p>Your Google Calendar has been connected.</p>
+						<p class="email">${staffMember.googleCalendarEmail}</p>
+						<p style="margin-top: 2rem; font-size: 0.875rem;">You can close this tab now.</p>
+					</div>
+				</body>
+				</html>
+			`);
+		}
+
+		// Handle User OAuth
+		if (stateData.type === "user" || stateData.userId) {
+			const userId = stateData.userId || stateData;
+			console.log("🔄 User OAuth: Processing user authentication...");
+
+			if (!userId) {
+				console.log("❌ User OAuth: User ID not found in state");
+				return res.status(400).send("User ID not found in state");
+			}
+
+			// Find the user by ID and save the tokens
+			const user = await User.findById(userId);
+
+			if (!user) {
+				console.log("❌ User OAuth: User not found");
+				return res.status(404).send("User not found");
+			}
+
+			console.log("✅ User OAuth: User found:", user.email);
+
+			// Fetch user info to get email
+			try {
+				const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
+				const userInfo = await oauth2.userinfo.get();
+				user.googleCalendarEmail = userInfo.data.email;
+				console.log("✅ Google Calendar email fetched:", userInfo.data.email);
+			} catch (emailError) {
+				console.error("⚠️ Failed to fetch Google email:", emailError);
+				// Continue even if email fetch fails
+			}
+
+			user.googleCalendarAccessToken = tokens.access_token;
+			user.googleCalendarRefreshToken = tokens.refresh_token;
+			user.googleCalendarTokenExpiry = new Date(tokens.expiry_date);
+			user.googleCalendarIntegrationStatus = "connected";
+
+			await user.save();
+
+			console.log("✅ User OAuth: Tokens saved to user record");
+
+			// Redirect the user to the bookings page
+			console.log("🔄 User OAuth: Redirecting to bookings page...");
+			return res.redirect(getFrontendRedirectUrl("/bookings"));
+		}
+
+		// If we get here, state format is unexpected
+		console.log("❌ OAuth Callback: Invalid state data");
+		return res.status(400).send("Invalid OAuth state");
 	} catch (error) {
 		console.error("❌ Google OAuth Callback Error:", error);
 		res.status(500).send("Failed to authenticate with Google Calendar");
