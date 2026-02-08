@@ -33,16 +33,18 @@ const timeSlotRoutes = require("../routes/timeslots");
 const googleCalendarRoutes = require("../routes/googleCalendar");
 const staffRoutes = require("../routes/staff");
 const servicesRoutes = require("../routes/services");
+const bookingConfigRoutes = require("../routes/bookingConfig");
 
 // Import models
 const Conversation = require("../models/Conversation");
 const UnansweredQuestion = require("../models/UnansweredQuestion");
+const BookingConfig = require("../models/BookingConfig");
 const { google } = require("googleapis");
 
 const app = express();
 const server = http.createServer(app);
 
-app.set("port", process.env.PORT || 5000);
+app.set("port", process.env.PORT || 3000);
 
 // Initialize MongoDB connection for serverless
 connectDB().catch((err) => console.error("MongoDB connection error:", err));
@@ -169,6 +171,9 @@ app.use("/api/staff", staffRoutes);
 // Mount services routes
 app.use("/api/services", servicesRoutes);
 
+// Mount booking config routes
+app.use("/api/booking-config", bookingConfigRoutes);
+
 var token = process.env.TOKEN || "token";
 var received_updates = [];
 
@@ -265,11 +270,11 @@ async function refreshStaffAccessToken(staffMember) {
 }
 
 // Helper function to generate proper date ranges for booking
-function generateBookingDateRange() {
+function generateBookingDateRange(advanceBookingDays = 14) {
 	const today = new Date();
 	const startDate = new Date(today);
 	const endDate = new Date(today);
-	endDate.setDate(endDate.getDate() + 14); // Next 14 days
+	endDate.setDate(endDate.getDate() + advanceBookingDays); // Configurable days
 
 	const formatISODate = (date) => {
 		const year = date.getFullYear();
@@ -298,6 +303,25 @@ async function getAvailableBookingSlots(
 		const business = await Business.findOne({ user: userId });
 		console.log(`🏢 Business found:`, !!business);
 		if (!business) return { availableSlots: [] };
+
+		// Load BookingConfig for custom booking settings
+		const BookingConfig = require("../models/BookingConfig");
+		let bookingSettings = null;
+		try {
+			const bookingConfig = await BookingConfig.findOne({
+				business: business._id,
+			});
+			if (bookingConfig && bookingConfig.settings) {
+				bookingSettings = bookingConfig.settings;
+				console.log(`⚙️ Using custom booking settings:`, {
+					bufferTime: bookingSettings.bufferTime,
+					advanceBookingDays: bookingSettings.advanceBookingDays,
+					sameDayBooking: bookingSettings.sameDayBooking,
+				});
+			}
+		} catch (error) {
+			console.error(`⚠️ Error loading BookingConfig:`, error);
+		}
 
 		const TimeSlot = require("../models/TimeSlot");
 		const StaffMember = require("../models/StaffMember");
@@ -379,7 +403,19 @@ async function getAvailableBookingSlots(
 		// Query Google Calendar using business timezone
 		// Get midnight of start date and end of end date in business timezone
 		const startDateObj = new Date(startDate + "T00:00:00");
-		const endDateObj = new Date(endDate + "T23:59:59");
+		let endDateObj = new Date(endDate + "T23:59:59");
+
+		// Apply advance booking days restriction if configured
+		if (bookingSettings && bookingSettings.advanceBookingDays) {
+			const maxDate = new Date();
+			maxDate.setDate(maxDate.getDate() + bookingSettings.advanceBookingDays);
+			if (endDateObj > maxDate) {
+				endDateObj = maxDate;
+				console.log(
+					`⚙️ Capping end date to ${bookingSettings.advanceBookingDays} days: ${endDateObj.toISOString()}`,
+				);
+			}
+		}
 
 		// Format as ISO strings (Google Calendar handles timezone conversion)
 		const timeMin = startDateObj.toISOString();
@@ -620,19 +656,67 @@ async function getAvailableBookingSlots(
 							continue;
 						}
 
-						const isAvailable = bookingsInAppointment < maxBookings;
+						// Apply same-day booking restriction if configured
+						if (bookingSettings && bookingSettings.sameDayBooking === false) {
+							const todayStr = new Date().toISOString().split("T")[0];
+							if (dateStr === todayStr) {
+								console.log(
+									`        🚫 ${appointmentStartTime}-${appointmentEndTime} same-day booking disabled`,
+								);
+								continue;
+							}
+						}
+
+						// Apply buffer time when checking conflicts
+						const bufferMinutes = bookingSettings?.bufferTime || 0;
+						let effectiveBookingsCount = bookingsInAppointment;
+
+						if (bufferMinutes > 0) {
+							// Expand check to include buffer time around existing bookings
+							for (const booking of bookings) {
+								const bStart = new Date(
+									booking.start.dateTime || booking.start.date,
+								);
+								const bEnd = new Date(booking.end.dateTime || booking.end.date);
+
+								// Add buffer before and after
+								const bStartWithBuffer = new Date(
+									bStart.getTime() - bufferMinutes * 60000,
+								);
+								const bEndWithBuffer = new Date(
+									bEnd.getTime() + bufferMinutes * 60000,
+								);
+
+								// Check if appointment would violate buffer
+								if (
+									appointmentStart < bEndWithBuffer &&
+									appointmentEnd > bStartWithBuffer
+								) {
+									// This slot is too close to an existing booking
+									if (!(appointmentStart < bEnd && appointmentEnd > bStart)) {
+										// Not already counted as overlap, so mark as unavailable
+										effectiveBookingsCount = maxBookings; // Force unavailable
+										console.log(
+											`        ⏰ ${appointmentStartTime}-${appointmentEndTime} violates ${bufferMinutes}min buffer`,
+										);
+										break;
+									}
+								}
+							}
+						}
+
+						const isAvailable = effectiveBookingsCount < maxBookings;
 
 						if (isAvailable) {
 							console.log(
-								`        ✅ ${appointmentStartTime}-${appointmentEndTime} available (${bookingsInAppointment}/${maxBookings})`,
+								`        ✅ ${appointmentStartTime}-${appointmentEndTime} AVAILABLE (${bookingsInAppointment}/${maxBookings})`,
 							);
 							availableSlots.push({
 								date: dateStr,
-								dayOfWeek: dayOfWeekNum,
+								day: dayName,
 								dayName: dayName,
 								startTime: appointmentStartTime,
 								endTime: appointmentEndTime,
-								// CRITICAL: Preserve timezone format for AI to use (DO NOT convert to UTC)
 								startDateTime: startDateTimeStr,
 								endDateTime: endDateTimeStr,
 								duration: duration,
@@ -684,6 +768,7 @@ async function createBooking(
 	attendeeName,
 	staffMemberId = null,
 	serviceId = null,
+	customFields = null,
 ) {
 	try {
 		console.log(`\n🎯 ========== CREATE BOOKING CALLED ==========`);
@@ -977,31 +1062,20 @@ async function createBooking(
 			bookingTitle = `Booking: ${bookingTitle}`;
 		}
 
-		const bookingDescription = description
-			? `${description}\n\nMeeting was booked with "ginivo.ai"`
-			: 'Meeting was booked with "ginivo.ai"';
+		let bookingDescription = description || "";
 
-		const event = {
-			summary: bookingTitle,
-			description: bookingDescription,
-			start: formatDateTime(start),
-			end: formatDateTime(end),
-			attendees: attendeeEmail
-				? [{ email: attendeeEmail, displayName: attendeeName }]
-				: [],
-		};
+		// Add custom fields to description if provided
+		if (customFields && Object.keys(customFields).length > 0) {
+			bookingDescription += bookingDescription ? "\n\n" : "";
+			bookingDescription += "=== CUSTOMER INFORMATION ===\n";
+			for (const [key, value] of Object.entries(customFields)) {
+				bookingDescription += `${key}: ${value}\n`;
+			}
+		}
 
-		console.log(`📅 Creating Google Calendar event:`, {
-			summary: event.summary,
-			start: event.start,
-			end: event.end,
-			timezone: timezone,
-		});
-
-		const response = await calendar.events.insert({
-			calendarId: "primary",
-			resource: event,
-		});
+		bookingDescription = bookingDescription
+			? `${bookingDescription}\n\nMeeting was booked with "ginivo.ai"`
+			: `Meeting was booked with "ginivo.ai"`;
 
 		// Save booking to database
 		const bookingData = {
@@ -1039,12 +1113,10 @@ async function createBooking(
 			bookingData.service = serviceId;
 		}
 
-		const booking = new Booking(bookingData);
-
-		await booking.save();
-		console.log(
-			`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`,
-		);
+		// Add custom fields if provided
+		if (customFields && Object.keys(customFields).length > 0) {
+			bookingData.customFields = new Map(Object.entries(customFields));
+		}
 
 		// Update customer information with booking details
 		try {
@@ -1473,19 +1545,70 @@ async function getOpenAIResponse(
 			}
 		}
 
-		// Generate proper date range for booking
+		// === LOAD BOOKING CONFIG FOR CUSTOM BOOKING FLOW ===
+		let bookingInstructions = "";
+		let customFieldsInstructions = "";
+		let cancellationPolicyText = "";
+
+		if (userId) {
+			try {
+				const bookingConfig = await BookingConfig.findOne({ user: userId });
+
+				if (bookingConfig && bookingConfig.generatedPrompt) {
+					// Use AI-generated custom booking prompt
+					bookingInstructions = bookingConfig.generatedPrompt;
+					console.log(
+						"✅ Using custom booking instructions from BookingConfig",
+					);
+
+					// Add custom fields requirements
+					if (
+						bookingConfig.requiredFields &&
+						bookingConfig.requiredFields.length > 0
+					) {
+						customFieldsInstructions =
+							"\n\nBEFORE CONFIRMING ANY BOOKING, YOU MUST COLLECT THESE FIELDS:\n";
+						bookingConfig.requiredFields.forEach((field) => {
+							const required = field.isRequired ? "(REQUIRED)" : "(Optional)";
+							customFieldsInstructions += `• ${field.fieldName} ${required}`;
+							if (field.description) {
+								customFieldsInstructions += ` - ${field.description}`;
+							}
+							if (
+								field.fieldType === "select" &&
+								field.options &&
+								field.options.length > 0
+							) {
+								customFieldsInstructions += ` [Options: ${field.options.join(", ")}]`;
+							}
+							customFieldsInstructions += "\n";
+						});
+					}
+
+					// Add cancellation policy if set
+					if (
+						bookingConfig.settings &&
+						bookingConfig.settings.cancellationPolicy
+					) {
+						cancellationPolicyText = `\n\nCANCELLATION POLICY: ${bookingConfig.settings.cancellationPolicy}`;
+					}
+				}
+			} catch (error) {
+				console.error("⚠️ Error loading BookingConfig, using default:", error);
+			}
+		}
+
+		// Build the booking date range
 		const bookingDateRange = generateBookingDateRange();
 
-		// Build messages array with conversation history
+		// Construct the messages array
 		const messages = [
 			{
 				role: "system",
 				content:
-					`⚠️ CRITICAL REQUIREMENT - MUST FOLLOW ⚠️
+					`## IMPORTANT CLASSIFICATION REQUIREMENT
 
-EVERY SINGLE RESPONSE YOU GIVE MUST END WITH ONE OF THESE TWO LINES:
-[CLASSIFICATION: ANSWERED]
-[CLASSIFICATION: UNANSWERED]
+EVERY single response you send MUST end with a classification tag on its own line.
 
 NO EXCEPTIONS. THIS IS MANDATORY FOR EVERY RESPONSE.
 
@@ -1574,7 +1697,8 @@ User: "I'd like to book a haircut"
 ---
 
 ` +
-					`BOOKINGS (VERY IMPORTANT – FOLLOW EXACTLY):
+					(bookingInstructions ||
+						`BOOKINGS (VERY IMPORTANT – FOLLOW EXACTLY):
 
 If a user shows interest in booking, scheduling, or reserving:
 
@@ -1625,7 +1749,9 @@ If booking fails:
 - Immediately check availability again
 - Offer new options
 
-Never claim a booking is confirmed unless create_booking succeeds.
+Never claim a booking is confirmed unless create_booking succeeds.`) +
+					customFieldsInstructions +
+					`
 
 ---
 
@@ -1979,6 +2105,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							functionArgs.attendeeName,
 							functionArgs.staffMemberId,
 							functionArgs.serviceId,
+							functionArgs.customFields || null,
 						);
 						toolResult = JSON.stringify(booking);
 					} else if (functionName === "cancel_booking") {
