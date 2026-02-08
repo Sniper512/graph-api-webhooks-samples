@@ -41,7 +41,7 @@ const getFrontendRedirectUrl = (path = "/bookings") => {
 const oauth2Client = new google.auth.OAuth2(
 	process.env.GOOGLE_CALENDAR_CLIENT_ID,
 	process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-	getRedirectUri()
+	getRedirectUri(),
 );
 
 // Helper function to refresh access token if expired
@@ -67,10 +67,10 @@ async function refreshAccessTokenIfNeeded(user) {
 			user.googleCalendarTokenExpiry = null;
 			await user.save();
 			console.log(
-				"✅ User calendar integration status updated to not_connected"
+				"✅ User calendar integration status updated to not_connected",
 			);
 			throw new Error(
-				"Google Calendar authentication expired. Please reconnect."
+				"Google Calendar authentication expired. Please reconnect.",
 			);
 		}
 	}
@@ -98,11 +98,11 @@ router.get("/auth/google", auth, (req, res) => {
 router.get("/auth/staff/:linkToken", async (req, res) => {
 	try {
 		const { linkToken } = req.params;
-		const StaffMember = require('../models/StaffMember');
+		const StaffMember = require("../models/StaffMember");
 
 		// Find staff member by link token
-		const staffMember = await StaffMember.findOne({ 
-			calendarLinkToken: linkToken 
+		const staffMember = await StaffMember.findOne({
+			calendarLinkToken: linkToken,
 		});
 
 		if (!staffMember) {
@@ -111,7 +111,11 @@ router.get("/auth/staff/:linkToken", async (req, res) => {
 
 		// Check if link has expired
 		if (!staffMember.isCalendarLinkValid()) {
-			return res.status(410).send("Calendar link has expired. Please request a new link from your manager.");
+			return res
+				.status(410)
+				.send(
+					"Calendar link has expired. Please request a new link from your manager.",
+				);
 		}
 
 		const scopes = [
@@ -121,18 +125,20 @@ router.get("/auth/staff/:linkToken", async (req, res) => {
 
 		// Use a different state format to distinguish staff OAuth from user OAuth
 		const state = JSON.stringify({
-			type: 'staff',
-			staffId: staffMember._id.toString()
+			type: "staff",
+			staffId: staffMember._id.toString(),
 		});
 
 		const url = oauth2Client.generateAuthUrl({
 			access_type: "offline",
 			scope: scopes,
 			prompt: "consent",
-			state: state
+			state: state,
 		});
 
-		console.log(`🔄 Staff OAuth initiated for ${staffMember.name} (${staffMember.email})`);
+		console.log(
+			`🔄 Staff OAuth initiated for ${staffMember.name} (${staffMember.email})`,
+		);
 		res.redirect(url);
 	} catch (error) {
 		console.error("❌ Staff OAuth Initiation Error:", error);
@@ -156,12 +162,12 @@ router.get("/auth/staff/callback", async (req, res) => {
 		// Parse the state parameter
 		const stateData = JSON.parse(state);
 
-		if (stateData.type !== 'staff' || !stateData.staffId) {
+		if (stateData.type !== "staff" || !stateData.staffId) {
 			console.log("❌ Staff OAuth Callback: Invalid state data");
 			return res.status(400).send("Invalid OAuth state");
 		}
 
-		const StaffMember = require('../models/StaffMember');
+		const StaffMember = require("../models/StaffMember");
 		const staffMember = await StaffMember.findById(stateData.staffId);
 
 		if (!staffMember) {
@@ -169,7 +175,10 @@ router.get("/auth/staff/callback", async (req, res) => {
 			return res.status(404).send("Staff member not found");
 		}
 
-		console.log("✅ Staff OAuth Callback: Staff member found:", staffMember.email);
+		console.log(
+			"✅ Staff OAuth Callback: Staff member found:",
+			staffMember.email,
+		);
 
 		// Fetch user info to get email
 		try {
@@ -186,13 +195,15 @@ router.get("/auth/staff/callback", async (req, res) => {
 		staffMember.googleCalendarRefreshToken = tokens.refresh_token;
 		staffMember.googleCalendarTokenExpiry = new Date(tokens.expiry_date);
 		staffMember.googleCalendarIntegrationStatus = "connected";
-		
+
 		// Invalidate the calendar link token (one-time use)
 		staffMember.invalidateCalendarLink();
 
 		await staffMember.save();
 
-		console.log(`✅ Staff OAuth Callback: Tokens saved for ${staffMember.name}`);
+		console.log(
+			`✅ Staff OAuth Callback: Tokens saved for ${staffMember.name}`,
+		);
 
 		// Redirect to a success page
 		res.send(`
@@ -345,7 +356,7 @@ router.get("/status", auth, async (req, res) => {
 		}
 
 		console.log(
-			"✅ Google Calendar Status: Integration status retrieved successfully"
+			"✅ Google Calendar Status: Integration status retrieved successfully",
 		);
 
 		res.json({
@@ -466,7 +477,7 @@ router.get("/bookings", auth, async (req, res) => {
 			}));
 
 		console.log(
-			`📅 Bookings fetched for user ${userId}: ${bookings.length} bookings`
+			`📅 Bookings fetched for user ${userId}: ${bookings.length} bookings`,
 		);
 		if (bookings.length > 0) {
 			console.log("📝 First booking details:", bookings[0]);
@@ -484,7 +495,7 @@ router.get("/bookings", auth, async (req, res) => {
 			(error.response && error.response.status === 401)
 		) {
 			console.log(
-				"🔐 Authentication error detected - updating user calendar status to not_connected"
+				"🔐 Authentication error detected - updating user calendar status to not_connected",
 			);
 
 			try {
@@ -496,7 +507,7 @@ router.get("/bookings", auth, async (req, res) => {
 					googleCalendarTokenExpiry: null,
 				});
 				console.log(
-					"✅ User calendar integration status updated to not_connected"
+					"✅ User calendar integration status updated to not_connected",
 				);
 			} catch (updateError) {
 				console.error("❌ Failed to update user calendar status:", updateError);
@@ -578,7 +589,7 @@ router.post("/events", auth, async (req, res) => {
 		// Get event data from request body
 		const { summary, description, start, end, location, attendees } = req.body;
 		console.log(
-			`📝 API: Event details - Summary: "${summary}", Start: ${start}, End: ${end}`
+			`📝 API: Event details - Summary: "${summary}", Start: ${start}, End: ${end}`,
 		);
 		if (!summary || !start || !end) {
 			console.log("❌ API: Missing required fields");
@@ -612,7 +623,7 @@ router.post("/events", auth, async (req, res) => {
 			resource: event,
 		});
 		console.log(
-			`✅ API: Event created successfully with ID ${response.data.id}`
+			`✅ API: Event created successfully with ID ${response.data.id}`,
 		);
 		// Return created event
 		const createdEvent = {

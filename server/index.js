@@ -124,7 +124,7 @@ app.use(
 		credentials: true,
 		methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 		allowedHeaders: ["Content-Type", "Authorization", "X-Admin-Key"],
-	})
+	}),
 );
 
 app.use(xhub({ algorithm: "sha1", secret: process.env.APP_SECRET }));
@@ -139,7 +139,7 @@ app.use(
 		resave: false,
 		saveUninitialized: true,
 		cookie: { secure: false }, // Set to true if using HTTPS
-	})
+	}),
 );
 
 // Mount auth routes
@@ -197,7 +197,7 @@ async function refreshAccessTokenIfNeeded(user) {
 			const oauth2Client = new google.auth.OAuth2(
 				process.env.GOOGLE_CALENDAR_CLIENT_ID,
 				process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-				getGoogleCalendarRedirectUri()
+				getGoogleCalendarRedirectUri(),
 			);
 			oauth2Client.setCredentials({
 				refresh_token: user.googleCalendarRefreshToken,
@@ -209,7 +209,7 @@ async function refreshAccessTokenIfNeeded(user) {
 		} catch (error) {
 			console.error(
 				"❌ Failed to refresh Google Calendar access token:",
-				error
+				error,
 			);
 			// Mark integration as not_connected if refresh fails
 			user.googleCalendarIntegrationStatus = "not_connected";
@@ -218,7 +218,7 @@ async function refreshAccessTokenIfNeeded(user) {
 			user.googleCalendarTokenExpiry = null;
 			await user.save();
 			throw new Error(
-				"Google Calendar authentication expired. Please reconnect."
+				"Google Calendar authentication expired. Please reconnect.",
 			);
 		}
 	}
@@ -228,12 +228,15 @@ async function refreshAccessTokenIfNeeded(user) {
 // Helper function to refresh staff member's Google Calendar access token if needed
 async function refreshStaffAccessToken(staffMember) {
 	const now = new Date();
-	if (staffMember.googleCalendarTokenExpiry && staffMember.googleCalendarTokenExpiry <= now) {
+	if (
+		staffMember.googleCalendarTokenExpiry &&
+		staffMember.googleCalendarTokenExpiry <= now
+	) {
 		try {
 			const oauth2Client = new google.auth.OAuth2(
 				process.env.GOOGLE_CALENDAR_CLIENT_ID,
 				process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-				getGoogleCalendarRedirectUri()
+				getGoogleCalendarRedirectUri(),
 			);
 			oauth2Client.setCredentials({
 				refresh_token: staffMember.googleCalendarRefreshToken,
@@ -245,7 +248,7 @@ async function refreshStaffAccessToken(staffMember) {
 		} catch (error) {
 			console.error(
 				`❌ Failed to refresh Google Calendar access token for staff ${staffMember.name}:`,
-				error
+				error,
 			);
 			// Mark integration as not_connected if refresh fails
 			staffMember.googleCalendarIntegrationStatus = "not_connected";
@@ -254,7 +257,7 @@ async function refreshStaffAccessToken(staffMember) {
 			staffMember.googleCalendarTokenExpiry = null;
 			await staffMember.save();
 			throw new Error(
-				`Google Calendar authentication expired for ${staffMember.name}. Please reconnect.`
+				`Google Calendar authentication expired for ${staffMember.name}. Please reconnect.`,
 			);
 		}
 	}
@@ -280,10 +283,16 @@ function generateBookingDateRange() {
 		endDate: formatISODate(endDate),
 	};
 }
-async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = null, staffMemberId = null) {
+async function getAvailableBookingSlots(
+	userId,
+	startDate,
+	endDate,
+	serviceId = null,
+	staffMemberId = null,
+) {
 	try {
 		console.log(
-			`🔍 Getting available slots for user ${userId}, dates: ${startDate} to ${endDate}${serviceId ? `, service: ${serviceId}` : ''}${staffMemberId ? `, staff: ${staffMemberId}` : ''}`
+			`🔍 Getting available slots for user ${userId}, dates: ${startDate} to ${endDate}${serviceId ? `, service: ${serviceId}` : ""}${staffMemberId ? `, staff: ${staffMemberId}` : ""}`,
 		);
 		const Business = require("../models/Business");
 		const business = await Business.findOne({ user: userId });
@@ -293,30 +302,42 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 		const TimeSlot = require("../models/TimeSlot");
 		const StaffMember = require("../models/StaffMember");
 		const Service = require("../models/Service");
-		
+
 		// If serviceId is provided, get all active staff members assigned to that service
 		let staffMembers = [];
 		if (serviceId) {
-			const service = await Service.findOne({ _id: serviceId, business: business._id, isActive: true });
+			const service = await Service.findOne({
+				_id: serviceId,
+				business: business._id,
+				isActive: true,
+			});
 			if (!service) {
 				console.log(`❌ Service ${serviceId} not found or inactive`);
 				return { availableSlots: [] };
 			}
-			
+
 			staffMembers = await StaffMember.find({
 				_id: { $in: service.staffMembers },
 				business: business._id,
-				isActive: true
+				isActive: true,
 			});
-			console.log(`👥 Found ${staffMembers.length} active staff members for service ${service.name}`);
-			
+			console.log(
+				`👥 Found ${staffMembers.length} active staff members for service ${service.name}`,
+			);
+
 			if (staffMembers.length === 0) {
-				console.log(`❌ No active staff members assigned to service ${service.name}`);
+				console.log(
+					`❌ No active staff members assigned to service ${service.name}`,
+				);
 				return { availableSlots: [] };
 			}
 		} else if (staffMemberId) {
 			// If specific staff member requested, load only that one
-			const staff = await StaffMember.findOne({ _id: staffMemberId, business: business._id, isActive: true });
+			const staff = await StaffMember.findOne({
+				_id: staffMemberId,
+				business: business._id,
+				isActive: true,
+			});
 			if (!staff) {
 				console.log(`❌ Staff member ${staffMemberId} not found or inactive`);
 				return { availableSlots: [] };
@@ -324,21 +345,21 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 			staffMembers = [staff];
 			console.log(`👤 Loading slots for staff member: ${staff.name}`);
 		}
-		
+
 		// Query time slots - if staff filtering is enabled, query per-staff schedules
 		const timeSlotQuery = {
 			business: business._id,
 			isActive: true,
 		};
-		
+
 		if (staffMembers.length > 0) {
 			// Query per-staff schedules for the specified staff members
-			timeSlotQuery.staffMember = { $in: staffMembers.map(s => s._id) };
+			timeSlotQuery.staffMember = { $in: staffMembers.map((s) => s._id) };
 		} else {
 			// Query business-level schedules only (staffMember: null)
 			timeSlotQuery.staffMember = null;
 		}
-		
+
 		const timeSlots = await TimeSlot.find(timeSlotQuery);
 		console.log(`⏰ Time slots found: ${timeSlots.length}`);
 
@@ -346,7 +367,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 		const user = await User.findById(userId);
 		console.log(
 			`👤 User Google Calendar status:`,
-			user?.googleCalendarIntegrationStatus
+			user?.googleCalendarIntegrationStatus,
 		);
 
 		// Get business timezone early for Google Calendar queries
@@ -354,34 +375,41 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 		console.log(`🌍 Business timezone: ${businessTimezone}`);
 
 		let bookings = [];
-		
+
 		// Query Google Calendar using business timezone
 		// Get midnight of start date and end of end date in business timezone
 		const startDateObj = new Date(startDate + "T00:00:00");
 		const endDateObj = new Date(endDate + "T23:59:59");
-		
+
 		// Format as ISO strings (Google Calendar handles timezone conversion)
 		const timeMin = startDateObj.toISOString();
 		const timeMax = endDateObj.toISOString();
 		console.log(
-			`📅 Calendar query range: ${timeMin} to ${timeMax} (${businessTimezone})`
+			`📅 Calendar query range: ${timeMin} to ${timeMax} (${businessTimezone})`,
 		);
-		
+
 		if (staffMembers.length > 0) {
 			// Query each staff member's Google Calendar
-			console.log(`📅 Fetching bookings from ${staffMembers.length} staff calendars...`);
+			console.log(
+				`📅 Fetching bookings from ${staffMembers.length} staff calendars...`,
+			);
 			for (const staff of staffMembers) {
-				if (staff.googleCalendarIntegrationStatus === 'connected') {
+				if (staff.googleCalendarIntegrationStatus === "connected") {
 					try {
 						const staffAccessToken = await refreshStaffAccessToken(staff);
 						const staffOAuth2Client = new google.auth.OAuth2(
 							process.env.GOOGLE_CALENDAR_CLIENT_ID,
 							process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-							process.env.GOOGLE_CALENDAR_REDIRECT_URI
+							process.env.GOOGLE_CALENDAR_REDIRECT_URI,
 						);
-						staffOAuth2Client.setCredentials({ access_token: staffAccessToken });
-						const staffCalendar = google.calendar({ version: "v3", auth: staffOAuth2Client });
-						
+						staffOAuth2Client.setCredentials({
+							access_token: staffAccessToken,
+						});
+						const staffCalendar = google.calendar({
+							version: "v3",
+							auth: staffOAuth2Client,
+						});
+
 						const response = await staffCalendar.events.list({
 							calendarId: "primary",
 							timeMin,
@@ -389,37 +417,48 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 							singleEvents: true,
 							orderBy: "startTime",
 						});
-						
+
 						const staffBookings = response.data.items.filter((event) => {
 							const summary = (event.summary || "").toLowerCase();
 							const description = (event.description || "").toLowerCase();
-							return summary.includes("booking") || description.includes("booking");
+							return (
+								summary.includes("booking") || description.includes("booking")
+							);
 						});
-						
+
 						// Add staff ID to each booking for identification
-						staffBookings.forEach(booking => {
+						staffBookings.forEach((booking) => {
 							booking._staffId = staff._id.toString();
 							booking._staffName = staff.name;
 						});
-						
+
 						bookings.push(...staffBookings);
-						console.log(`📅 Staff ${staff.name}: ${staffBookings.length} bookings found`);
+						console.log(
+							`📅 Staff ${staff.name}: ${staffBookings.length} bookings found`,
+						);
 					} catch (err) {
-						console.error(`❌ Error fetching calendar for staff ${staff.name}:`, err.message);
+						console.error(
+							`❌ Error fetching calendar for staff ${staff.name}:`,
+							err.message,
+						);
 					}
 				} else {
-					console.log(`⚠️  Staff ${staff.name} calendar not connected, skipping`);
+					console.log(
+						`⚠️  Staff ${staff.name} calendar not connected, skipping`,
+					);
 				}
 			}
 			console.log(`📅 Total bookings from all staff: ${bookings.length}`);
 		} else if (user && user.googleCalendarIntegrationStatus === "connected") {
 			// Query business owner's Google Calendar (no staff filtering)
-			console.log(`📅 Fetching existing bookings from business owner's Google Calendar...`);
+			console.log(
+				`📅 Fetching existing bookings from business owner's Google Calendar...`,
+			);
 			const accessToken = await refreshAccessTokenIfNeeded(user);
 			const oauth2Client = new google.auth.OAuth2(
 				process.env.GOOGLE_CALENDAR_CLIENT_ID,
 				process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-				process.env.GOOGLE_CALENDAR_REDIRECT_URI
+				process.env.GOOGLE_CALENDAR_REDIRECT_URI,
 			);
 			oauth2Client.setCredentials({ access_token: accessToken });
 			const calendar = google.calendar({ version: "v3", auth: oauth2Client });
@@ -454,7 +493,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 			const mins = minutes % 60;
 			return `${String(hours).padStart(2, "0")}:${String(mins).padStart(
 				2,
-				"0"
+				"0",
 			)}`;
 		};
 
@@ -500,26 +539,26 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 			const dayOfWeekNum = dayMap[dayOfWeek];
 			const daySlots = timeSlots.filter((ts) => ts.dayOfWeek === dayOfWeekNum);
 			console.log(
-				`📅 Day ${dateStr} (${dayName}): ${daySlots.length} time slots configured`
+				`📅 Day ${dateStr} (${dayName}): ${daySlots.length} time slots configured`,
 			);
 
 			if (daySlots.length === 0) continue;
 
 			for (const ts of daySlots) {
 				console.log(
-					`  ⏰ TimeSlot ID ${ts._id}: ${ts.slots.length} slot configurations`
+					`  ⏰ TimeSlot ID ${ts._id}: ${ts.slots.length} slot configurations`,
 				);
 
 				for (const slot of ts.slots) {
 					if (!slot.isActive) {
 						console.log(
-							`    ❌ Slot ${slot.startTime}-${slot.endTime} is inactive`
+							`    ❌ Slot ${slot.startTime}-${slot.endTime} is inactive`,
 						);
 						continue;
 					}
 
 					console.log(
-						`    ✅ Slot ${slot.startTime}-${slot.endTime} (${slot.duration}min, max ${slot.maxBookings} bookings) is active`
+						`    ✅ Slot ${slot.startTime}-${slot.endTime} (${slot.duration}min, max ${slot.maxBookings} bookings) is active`,
 					);
 
 					// Generate individual appointment slots based on duration
@@ -529,7 +568,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 					const maxBookings = slot.maxBookings || 1;
 
 					console.log(
-						`      🔄 Generating individual ${duration}-minute appointment slots...`
+						`      🔄 Generating individual ${duration}-minute appointment slots...`,
 					);
 
 					// Create individual appointment slots (e.g., 9:00-9:30, 9:30-10:00, etc.)
@@ -555,7 +594,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 						let bookingsInAppointment = 0;
 						for (const booking of bookings) {
 							const bStart = new Date(
-								booking.start.dateTime || booking.start.date
+								booking.start.dateTime || booking.start.date,
 							);
 							const bEnd = new Date(booking.end.dateTime || booking.end.date);
 
@@ -565,7 +604,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 								console.log(
 									`        📊 Overlap found: ${
 										booking.summary
-									} (${bStart.toISOString()} - ${bEnd.toISOString()})`
+									} (${bStart.toISOString()} - ${bEnd.toISOString()})`,
 								);
 							}
 						}
@@ -576,7 +615,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 
 						if (isPastSlot) {
 							console.log(
-								`        ⏰ ${appointmentStartTime}-${appointmentEndTime} is in the past (now: ${now.toISOString()})`
+								`        ⏰ ${appointmentStartTime}-${appointmentEndTime} is in the past (now: ${now.toISOString()})`,
 							);
 							continue;
 						}
@@ -585,7 +624,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 
 						if (isAvailable) {
 							console.log(
-								`        ✅ ${appointmentStartTime}-${appointmentEndTime} available (${bookingsInAppointment}/${maxBookings})`
+								`        ✅ ${appointmentStartTime}-${appointmentEndTime} available (${bookingsInAppointment}/${maxBookings})`,
 							);
 							availableSlots.push({
 								date: dateStr,
@@ -602,7 +641,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 							});
 						} else {
 							console.log(
-								`        ❌ ${appointmentStartTime}-${appointmentEndTime} FULL (${bookingsInAppointment}/${maxBookings})`
+								`        ❌ ${appointmentStartTime}-${appointmentEndTime} FULL (${bookingsInAppointment}/${maxBookings})`,
 							);
 						}
 					}
@@ -618,7 +657,7 @@ async function getAvailableBookingSlots(userId, startDate, endDate, serviceId = 
 				console.log(
 					`  ${idx + 1}. ${slot.dayName} ${slot.date} ${slot.startTime}-${
 						slot.endTime
-					}`
+					}`,
 				);
 				console.log(`     startDateTime: ${slot.startDateTime}`);
 				console.log(`     endDateTime: ${slot.endDateTime}`);
@@ -644,7 +683,7 @@ async function createBooking(
 	attendeeEmail,
 	attendeeName,
 	staffMemberId = null,
-	serviceId = null
+	serviceId = null,
 ) {
 	try {
 		console.log(`\n🎯 ========== CREATE BOOKING CALLED ==========`);
@@ -665,14 +704,14 @@ async function createBooking(
 
 		// Determine which calendar to use - staff or business owner
 		let calendarOwner, calendarOwnerName, accessToken, oauth2Client, calendar;
-		
+
 		if (staffMemberId) {
 			// Use staff member's calendar
 			const staff = await StaffMember.findById(staffMemberId);
 			if (!staff || staff.googleCalendarIntegrationStatus !== "connected") {
 				return { error: `Staff member's Google Calendar not connected` };
 			}
-			
+
 			calendarOwner = staff;
 			calendarOwnerName = staff.name;
 			accessToken = await refreshStaffAccessToken(staff);
@@ -683,17 +722,17 @@ async function createBooking(
 			if (!user || user.googleCalendarIntegrationStatus !== "connected") {
 				return { error: "Google Calendar not connected" };
 			}
-			
+
 			calendarOwner = user;
 			calendarOwnerName = "Business Owner";
 			accessToken = await refreshAccessTokenIfNeeded(user);
 			console.log(`📅 Using business owner's calendar`);
 		}
-		
+
 		oauth2Client = new google.auth.OAuth2(
 			process.env.GOOGLE_CALENDAR_CLIENT_ID,
 			process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-			process.env.GOOGLE_CALENDAR_REDIRECT_URI
+			process.env.GOOGLE_CALENDAR_REDIRECT_URI,
 		);
 		oauth2Client.setCredentials({ access_token: accessToken });
 		calendar = google.calendar({ version: "v3", auth: oauth2Client });
@@ -722,10 +761,10 @@ async function createBooking(
 
 		console.log(`🔍 Requested time range (parsed):`);
 		console.log(
-			`   Start: ${requestedStart.toISOString()} (${requestedStart.toString()})`
+			`   Start: ${requestedStart.toISOString()} (${requestedStart.toString()})`,
 		);
 		console.log(
-			`   End: ${requestedEnd.toISOString()} (${requestedEnd.toString()})`
+			`   End: ${requestedEnd.toISOString()} (${requestedEnd.toString()})`,
 		);
 
 		// Get existing bookings from Google Calendar for this time range
@@ -738,7 +777,7 @@ async function createBooking(
 		});
 
 		console.log(
-			`📅 Found ${existingEvents.data.items.length} existing events in this time range`
+			`📅 Found ${existingEvents.data.items.length} existing events in this time range`,
 		);
 		existingEvents.data.items.forEach((event, idx) => {
 			const eventStart = new Date(event.start.dateTime || event.start.date);
@@ -746,7 +785,7 @@ async function createBooking(
 			console.log(
 				`   ${idx + 1}. "${
 					event.summary
-				}": ${eventStart.toISOString()} - ${eventEnd.toISOString()}`
+				}": ${eventStart.toISOString()} - ${eventEnd.toISOString()}`,
 			);
 		});
 
@@ -761,13 +800,13 @@ async function createBooking(
 			if (hasOverlap) {
 				console.log(`⚠️  CONFLICT: "${event.summary}"`);
 				console.log(
-					`     Event: ${eventStart.toISOString()} - ${eventEnd.toISOString()}`
+					`     Event: ${eventStart.toISOString()} - ${eventEnd.toISOString()}`,
 				);
 				console.log(
-					`     Requested: ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`
+					`     Requested: ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`,
 				);
 				console.log(
-					`     Overlap check: ${requestedStart.toISOString()} < ${eventEnd.toISOString()} && ${requestedEnd.toISOString()} > ${eventStart.toISOString()}`
+					`     Overlap check: ${requestedStart.toISOString()} < ${eventEnd.toISOString()} && ${requestedEnd.toISOString()} > ${eventStart.toISOString()}`,
 				);
 			}
 
@@ -776,7 +815,7 @@ async function createBooking(
 
 		if (conflicts.length > 0) {
 			console.log(
-				`❌ Cannot create booking - ${conflicts.length} conflict(s) found`
+				`❌ Cannot create booking - ${conflicts.length} conflict(s) found`,
 			);
 			return {
 				error:
@@ -839,55 +878,55 @@ async function createBooking(
 					// Construct slot times using business date and offset
 					// format: 2025-12-29T09:00:00+05:00
 					const slotStart = new Date(
-						`${businessDateStr}T${slot.startTime}:00${offset}`
+						`${businessDateStr}T${slot.startTime}:00${offset}`,
 					);
 					const slotEnd = new Date(
-						`${businessDateStr}T${slot.endTime}:00${offset}`
+						`${businessDateStr}T${slot.endTime}:00${offset}`,
 					);
 
 					// Check if requested time overlaps with this slot
 					if (requestedStart < slotEnd && requestedEnd > slotStart) {
 						console.log(
-							`🔍 Checking capacity for slot ${slot.startTime}-${slot.endTime} (max: ${slot.maxBookings})`
+							`🔍 Checking capacity for slot ${slot.startTime}-${slot.endTime} (max: ${slot.maxBookings})`,
 						);
 
 						// Count existing bookings that OVERLAP with this slot
 						const overlappingBookings = existingEvents.data.items.filter(
 							(event) => {
 								const eStart = new Date(
-									event.start.dateTime || event.start.date
+									event.start.dateTime || event.start.date,
 								);
 								const eEnd = new Date(event.end.dateTime || event.end.date);
 
 								// Check if the existing event overlaps with this slot
 								return eStart < slotEnd && eEnd > slotStart;
-							}
+							},
 						);
 
 						const bookingCount = overlappingBookings.length;
 						console.log(
-							`📊 Found ${bookingCount} overlapping bookings in this slot`
+							`📊 Found ${bookingCount} overlapping bookings in this slot`,
 						);
 						overlappingBookings.forEach((b, idx) => {
 							console.log(
 								`  ${idx + 1}. ${b.summary} (${new Date(
-									b.start.dateTime || b.start.date
+									b.start.dateTime || b.start.date,
 								).toISOString()} - ${new Date(
-									b.end.dateTime || b.end.date
-								).toISOString()})`
+									b.end.dateTime || b.end.date,
+								).toISOString()})`,
 							);
 						});
 
 						if (bookingCount >= slot.maxBookings) {
 							console.log(
-								`❌ Slot capacity reached: ${bookingCount}/${slot.maxBookings} bookings`
+								`❌ Slot capacity reached: ${bookingCount}/${slot.maxBookings} bookings`,
 							);
 							return {
 								error: `This time slot has reached its maximum capacity (${slot.maxBookings} bookings). Please choose a different time.`,
 							};
 						} else {
 							console.log(
-								`✅ Slot has capacity: ${bookingCount}/${slot.maxBookings} bookings`
+								`✅ Slot has capacity: ${bookingCount}/${slot.maxBookings} bookings`,
 							);
 						}
 					}
@@ -916,7 +955,7 @@ async function createBooking(
 
 		// Build booking title with service and staff information
 		let bookingTitle = summary;
-		
+
 		// Add service name if provided
 		if (serviceId) {
 			const Service = require("../models/Service");
@@ -925,12 +964,12 @@ async function createBooking(
 				bookingTitle = `${service.name}: ${summary}`;
 			}
 		}
-		
+
 		// Add staff name if provided
 		if (staffMemberId && calendarOwner) {
 			bookingTitle = `${bookingTitle} (with ${calendarOwner.name})`;
 		}
-		
+
 		// Add business name prefix
 		if (businessInfo && businessInfo.businessName) {
 			bookingTitle = `Booking with ${businessInfo.businessName} - ${bookingTitle}`;
@@ -988,10 +1027,10 @@ async function createBooking(
 							displayName: attendeeName,
 							responseStatus: "needsAction",
 						},
-				  ]
+					]
 				: [],
 		};
-		
+
 		// Add staff member and service references if provided
 		if (staffMemberId) {
 			bookingData.staffMember = staffMemberId;
@@ -999,12 +1038,12 @@ async function createBooking(
 		if (serviceId) {
 			bookingData.service = serviceId;
 		}
-		
+
 		const booking = new Booking(bookingData);
 
 		await booking.save();
 		console.log(
-			`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`
+			`💾 Booking saved to database: ${booking._id} for conversation ${conversationId}`,
 		);
 
 		// Update customer information with booking details
@@ -1035,7 +1074,7 @@ async function createBooking(
 		} catch (customerError) {
 			console.error(
 				`\u26a0\ufe0f Error updating customer info:`,
-				customerError
+				customerError,
 			);
 			// Don't fail the booking if customer update fails
 		}
@@ -1059,13 +1098,13 @@ async function createBooking(
 					console.log(`✅ Booking confirmation email sent to ${attendeeEmail}`);
 				} else {
 					console.error(
-						`⚠️ Failed to send booking confirmation email: ${emailResult.error}`
+						`⚠️ Failed to send booking confirmation email: ${emailResult.error}`,
 					);
 				}
 			} catch (emailError) {
 				console.error(
 					`⚠️ Error sending booking confirmation email:`,
-					emailError
+					emailError,
 				);
 				// Don't fail the booking if email fails
 			}
@@ -1099,7 +1138,7 @@ async function cancelBooking(userId, eventId) {
 		const oauth2Client = new google.auth.OAuth2(
 			process.env.GOOGLE_CALENDAR_CLIENT_ID,
 			process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
-			process.env.GOOGLE_CALENDAR_REDIRECT_URI
+			process.env.GOOGLE_CALENDAR_REDIRECT_URI,
 		);
 		oauth2Client.setCredentials({ access_token: accessToken });
 		const calendar = google.calendar({ version: "v3", auth: oauth2Client });
@@ -1124,13 +1163,13 @@ async function cancelBooking(userId, eventId) {
 					{
 						$inc: { totalCancellations: 1 },
 						$set: { lastContactAt: new Date() },
-					}
+					},
 				);
 				console.log(`\ud83d\udc64 Customer cancellation count updated`);
 			} catch (customerError) {
 				console.error(
 					`\u26a0\ufe0f Error updating customer cancellation:`,
-					customerError
+					customerError,
 				);
 			}
 
@@ -1154,11 +1193,11 @@ async function cancelBooking(userId, eventId) {
 
 						if (emailResult.success) {
 							console.log(
-								`✅ Booking cancellation email sent to ${attendee.email}`
+								`✅ Booking cancellation email sent to ${attendee.email}`,
 							);
 						} else {
 							console.error(
-								`⚠️ Failed to send cancellation email: ${emailResult.error}`
+								`⚠️ Failed to send cancellation email: ${emailResult.error}`,
 							);
 						}
 					} catch (emailError) {
@@ -1183,24 +1222,24 @@ async function getServices(userId) {
 		const Business = require("../models/Business");
 		const Service = require("../models/Service");
 		const StaffMember = require("../models/StaffMember");
-		
+
 		const business = await Business.findOne({ user: userId });
 		if (!business) {
 			return { services: [] };
 		}
-		
+
 		// Get all active services with populated staff members
 		const services = await Service.find({
 			business: business._id,
-			isActive: true
+			isActive: true,
 		}).populate({
-			path: 'staffMembers',
+			path: "staffMembers",
 			match: { isActive: true },
-			select: 'name email role googleCalendarIntegrationStatus'
+			select: "name email role googleCalendarIntegrationStatus",
 		});
-		
+
 		// Format services for AI response
-		const formattedServices = services.map(service => ({
+		const formattedServices = services.map((service) => ({
 			id: service._id,
 			name: service.name,
 			description: service.description,
@@ -1208,14 +1247,15 @@ async function getServices(userId) {
 			price: service.price,
 			currency: service.currency,
 			category: service.category,
-			staffMembers: service.staffMembers.map(staff => ({
+			staffMembers: service.staffMembers.map((staff) => ({
 				id: staff._id,
 				name: staff.name,
 				role: staff.role,
-				calendarConnected: staff.googleCalendarIntegrationStatus === 'connected'
-			}))
+				calendarConnected:
+					staff.googleCalendarIntegrationStatus === "connected",
+			})),
 		}));
-		
+
 		console.log(`🛠️  Found ${formattedServices.length} active services`);
 		return { services: formattedServices };
 	} catch (error) {
@@ -1235,7 +1275,7 @@ async function listUserBookings(conversationId, senderId, userId) {
 		}).sort({ createdAt: -1 });
 
 		console.log(
-			`📋 Found ${bookings.length} active bookings for conversation ${conversationId}`
+			`📋 Found ${bookings.length} active bookings for conversation ${conversationId}`,
 		);
 
 		return {
@@ -1260,14 +1300,14 @@ async function updateCustomerPreferences(senderId, userId, likings) {
 	try {
 		const Customer = require("../models/Customer");
 		console.log(
-			`\ud83d\udccb Updating customer preferences for senderId: ${senderId}`
+			`\ud83d\udccb Updating customer preferences for senderId: ${senderId}`,
 		);
 		console.log(`   Likings to add: ${JSON.stringify(likings)}`);
 
 		const customer = await Customer.updatePreferences(
 			senderId,
 			userId,
-			likings
+			likings,
 		);
 
 		console.log(`\u2705 Customer preferences updated successfully`);
@@ -1292,7 +1332,7 @@ async function getOpenAIResponse(
 	userMessage,
 	senderId,
 	userId,
-	platform = "instagram"
+	platform = "instagram",
 ) {
 	try {
 		console.log(`\n🤖 Sending to OpenAI (${OPENAI_MODEL})...`);
@@ -1303,7 +1343,7 @@ async function getOpenAIResponse(
 		const conversation = await Conversation.findOrCreate(
 			senderId,
 			platform,
-			userId
+			userId,
 		);
 		const conversationHistory = conversation.getRecentMessages(10);
 
@@ -1315,7 +1355,7 @@ async function getOpenAIResponse(
 		const customer = await Customer.findOrCreateCustomer(
 			senderId,
 			userId,
-			platform
+			platform,
 		);
 
 		// Update last contact time
@@ -1358,7 +1398,7 @@ async function getOpenAIResponse(
 				customerContext += `\nRecent Booking History:\n`;
 				bookingHistory.forEach((booking, index) => {
 					const bookingDate = new Date(
-						booking.start.dateTime || booking.start.date
+						booking.start.dateTime || booking.start.date,
 					);
 					customerContext += `  ${index + 1}. ${
 						booking.summary
@@ -1368,7 +1408,7 @@ async function getOpenAIResponse(
 
 			if (customer.likings && customer.likings.length > 0) {
 				customerContext += `\nCustomer Preferences: ${customer.likings.join(
-					", "
+					", ",
 				)}\n`;
 			}
 
@@ -1670,11 +1710,13 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							},
 							serviceId: {
 								type: "string",
-								description: "Optional: Service ID from get_services. When provided, returns slots from staff assigned to this service.",
+								description:
+									"Optional: Service ID from get_services. When provided, returns slots from staff assigned to this service.",
 							},
 							staffMemberId: {
 								type: "string",
-								description: "Optional: Specific staff member ID. When provided, returns slots only from that staff member.",
+								description:
+									"Optional: Specific staff member ID. When provided, returns slots only from that staff member.",
 							},
 						},
 						required: ["startDate", "endDate"],
@@ -1718,11 +1760,13 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							},
 							staffMemberId: {
 								type: "string",
-								description: "Optional: Staff member ID from get_available_booking_slots response. Required when booking with specific staff.",
+								description:
+									"Optional: Staff member ID from get_available_booking_slots response. Required when booking with specific staff.",
 							},
 							serviceId: {
 								type: "string",
-								description: "Optional: Service ID from get_services. Recommended to include when booking a specific service.",
+								description:
+									"Optional: Service ID from get_services. Recommended to include when booking a specific service.",
 							},
 						},
 						required: ["summary", "start", "end"],
@@ -1782,41 +1826,41 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 					},
 				},
 			},
-		{
-			type: "function",
-			function: {
-				name: "get_services",
-				description:
-					"Get list of available services offered by the business. Call this when user asks about services, or mentions wanting a specific type of service. Returns service details including assigned staff members.",
-				parameters: {
-					type: "object",
-					properties: {},
-					required: [],
+			{
+				type: "function",
+				function: {
+					name: "get_services",
+					description:
+						"Get list of available services offered by the business. Call this when user asks about services, or mentions wanting a specific type of service. Returns service details including assigned staff members.",
+					parameters: {
+						type: "object",
+						properties: {},
+						required: [],
+					},
 				},
 			},
-		},
-	];
+		];
 
-	// Helper function to make OpenAI API call
-	async function makeOpenAICall(messages) {
-		const response = await axios.post(
-			"https://api.openai.com/v1/chat/completions",
-			{
-				model: "gpt-4o",
-				messages: messages,
-				tools: tools,
-			},
-			{
-				headers: {
-					Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-					"Content-Type": "application/json",
+		// Helper function to make OpenAI API call
+		async function makeOpenAICall(messages) {
+			const response = await axios.post(
+				"https://api.openai.com/v1/chat/completions",
+				{
+					model: "gpt-4o",
+					messages: messages,
+					tools: tools,
 				},
-			}
-		);
-		return response.data;
-	}
+				{
+					headers: {
+						Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+						"Content-Type": "application/json",
+					},
+				},
+			);
+			return response.data;
+		}
 
-	// Make initial API call
+		// Make initial API call
 		let response = await makeOpenAICall(messages);
 		let aiResponse = "";
 		let maxToolCalls = 3; // Prevent infinite loops
@@ -1833,7 +1877,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 			const toolCalls = choice.message.tool_calls;
 
 			console.log(
-				`\n🔧 Function calls detected (round ${toolCallCount}): ${toolCalls.length} calls`
+				`\n🔧 Function calls detected (round ${toolCallCount}): ${toolCalls.length} calls`,
 			);
 			toolCalls.forEach((call, index) => {
 				console.log(`  ${index + 1}. ${call.function.name}`);
@@ -1854,7 +1898,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 					if (functionName === "get_available_booking_slots") {
 						console.log(
 							`🔧 Executing get_available_booking_slots with args:`,
-							functionArgs
+							functionArgs,
 						);
 						// Use provided dates or generate default range
 						let startDate = functionArgs.startDate;
@@ -1869,11 +1913,11 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							startDate = dateRange.startDate;
 							endDate = dateRange.endDate;
 							console.log(
-								`📅 Using generated date range: ${startDate} to ${endDate}`
+								`📅 Using generated date range: ${startDate} to ${endDate}`,
 							);
 						} else {
 							console.log(
-								`📅 Using provided date range: ${startDate} to ${endDate}`
+								`📅 Using provided date range: ${startDate} to ${endDate}`,
 							);
 
 							// Basic validation - ensure dates are not too far in past/future
@@ -1881,10 +1925,10 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							const end = new Date(endDate);
 							const now = new Date();
 							const oneYearAgo = new Date(
-								now.getTime() - 365 * 24 * 60 * 60 * 1000
+								now.getTime() - 365 * 24 * 60 * 60 * 1000,
 							);
 							const oneYearFromNow = new Date(
-								now.getTime() + 365 * 24 * 60 * 60 * 1000
+								now.getTime() + 365 * 24 * 60 * 60 * 1000,
 							);
 
 							if (
@@ -1894,20 +1938,20 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 								end > oneYearFromNow
 							) {
 								console.log(
-									`❌ Date range too far from current date, using default range`
+									`❌ Date range too far from current date, using default range`,
 								);
 								const dateRange = generateBookingDateRange();
 								startDate = dateRange.startDate;
 								endDate = dateRange.endDate;
 							} else if (end <= start) {
 								console.log(
-									`❌ Invalid date range: end (${endDate}) <= start (${startDate}), using default range`
+									`❌ Invalid date range: end (${endDate}) <= start (${startDate}), using default range`,
 								);
 								const dateRange = generateBookingDateRange();
 								startDate = dateRange.startDate;
 								endDate = dateRange.endDate;
 								console.log(
-									`🔄 Using fallback date range: ${startDate} to ${endDate}`
+									`🔄 Using fallback date range: ${startDate} to ${endDate}`,
 								);
 							}
 						}
@@ -1917,7 +1961,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							startDate,
 							endDate,
 							functionArgs.serviceId,
-							functionArgs.staffMemberId
+							functionArgs.staffMemberId,
 						);
 						toolResult = JSON.stringify(slots);
 						console.log(`📅 Available slots result:`, slots);
@@ -1934,44 +1978,44 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 							functionArgs.attendeeEmail,
 							functionArgs.attendeeName,
 							functionArgs.staffMemberId,
-							functionArgs.serviceId
+							functionArgs.serviceId,
 						);
 						toolResult = JSON.stringify(booking);
 					} else if (functionName === "cancel_booking") {
 						console.log(
-							`🔧 Executing cancel_booking with eventId: ${functionArgs.eventId}`
+							`🔧 Executing cancel_booking with eventId: ${functionArgs.eventId}`,
 						);
 						const cancellation = await cancelBooking(
 							userId,
-							functionArgs.eventId
+							functionArgs.eventId,
 						);
 						toolResult = JSON.stringify(cancellation);
 						console.log(`📅 Cancellation result:`, cancellation);
 						console.log(`💾 Booking cancelled in database`);
 					} else if (functionName === "list_user_bookings") {
 						console.log(
-							`🔧 Executing list_user_bookings for conversation ${conversation._id}`
+							`🔧 Executing list_user_bookings for conversation ${conversation._id}`,
 						);
 						const bookings = await listUserBookings(
 							conversation._id,
 							senderId,
-							userId
+							userId,
 						);
 						toolResult = JSON.stringify(bookings);
 						console.log(
 							`📋 User bookings result: ${
 								bookings.bookings?.length || 0
-							} bookings`
+							} bookings`,
 						);
 					} else if (functionName === "update_customer_preferences") {
 						console.log(
 							`🔧 Executing update_customer_preferences with likings:`,
-							functionArgs.likings
+							functionArgs.likings,
 						);
 						const preferencesResult = await updateCustomerPreferences(
 							senderId,
 							userId,
-							functionArgs.likings
+							functionArgs.likings,
 						);
 						toolResult = JSON.stringify(preferencesResult);
 						console.log(`💾 Customer preferences updated:`, preferencesResult);
@@ -1982,7 +2026,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 						console.log(
 							`📋 Services result: ${
 								services.services?.length || 0
-							} services found`
+							} services found`,
 						);
 					} else {
 						toolResult = JSON.stringify({ error: "Unknown function" });
@@ -2009,7 +2053,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 
 			// Make API call with tool results (may result in more tool calls or final response)
 			console.log(
-				`🤖 Making API call with tool results (round ${toolCallCount})...`
+				`🤖 Making API call with tool results (round ${toolCallCount})...`,
 			);
 			response = await makeOpenAICall(messages);
 		}
@@ -2022,7 +2066,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 		// Parse classification from response
 		let isUnanswered = false;
 		const classificationMatch = rawResponse.match(
-			/\[CLASSIFICATION:\s*(ANSWERED|UNANSWERED)\]/i
+			/\[CLASSIFICATION:\s*(ANSWERED|UNANSWERED)\]/i,
 		);
 
 		if (classificationMatch) {
@@ -2034,7 +2078,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 			console.log(
 				`🔍 Classification extracted: ${
 					isUnanswered ? "UNANSWERED" : "ANSWERED"
-				}`
+				}`,
 			);
 		} else {
 			// Fallback: Use pattern matching to detect refusal responses
@@ -2054,16 +2098,16 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 			];
 
 			isUnanswered = refusalPatterns.some((pattern) =>
-				pattern.test(aiResponse)
+				pattern.test(aiResponse),
 			);
 
 			if (isUnanswered) {
 				console.log(
-					`⚠️ No classification tag found, but pattern-based detection identified: UNANSWERED`
+					`⚠️ No classification tag found, but pattern-based detection identified: UNANSWERED`,
 				);
 			} else {
 				console.log(
-					`⚠️ No classification tag found, pattern-based detection: ANSWERED`
+					`⚠️ No classification tag found, pattern-based detection: ANSWERED`,
 				);
 			}
 		}
@@ -2117,7 +2161,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 		} catch (socketError) {
 			console.error(
 				`\u26a0\ufe0f Error emitting socket events:`,
-				socketError.message
+				socketError.message,
 			);
 			// Don't fail the response if socket emit fails
 		}
@@ -2134,7 +2178,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 					status: "pending",
 				});
 				console.log(
-					"📝 Saved unanswered question to database (from inline classification)"
+					"📝 Saved unanswered question to database (from inline classification)",
 				);
 			} catch (err) {
 				console.error("❌ Error saving unanswered question:", err);
@@ -2145,7 +2189,7 @@ CONTEXT AWARENESS: You have access to the full conversation history. Use previou
 	} catch (error) {
 		console.error(
 			"\n❌ OpenAI API Error:",
-			error.response?.data || error.message
+			error.response?.data || error.message,
 		);
 		return "Sorry, I'm having trouble processing your message right now. Please try again later.";
 	}
@@ -2156,7 +2200,7 @@ async function sendInstagramMessage(
 	recipientId,
 	messageText,
 	accessToken,
-	accountId
+	accountId,
 ) {
 	try {
 		const response = await axios.post(
@@ -2181,14 +2225,14 @@ async function sendInstagramMessage(
 					Authorization: `Bearer ${accessToken}`,
 					"Content-Type": "application/json",
 				},
-			}
+			},
 		);
 		console.log("Instagram message sent successfully:", response.data);
 		return response.data;
 	} catch (error) {
 		console.error(
 			"Instagram Send API Error:",
-			error.response?.data || error.message
+			error.response?.data || error.message,
 		);
 		throw error;
 	}
@@ -2196,7 +2240,7 @@ async function sendInstagramMessage(
 	async function getInstagramUserProfile(userId, accessToken) {
 		try {
 			const response = await axios.get(
-				`https://graph.instagram.com/${userId}?fields=username&access_token=${accessToken}`
+				`https://graph.instagram.com/${userId}?fields=username&access_token=${accessToken}`,
 			);
 			return {
 				username: response.data.username,
@@ -2205,7 +2249,7 @@ async function sendInstagramMessage(
 		} catch (error) {
 			console.error(
 				"Instagram User Profile API Error:",
-				error.response?.data || error.message
+				error.response?.data || error.message,
 			);
 			return {
 				username: null,
@@ -2233,14 +2277,14 @@ async function sendWhatsAppMessage(recipientId, messageText) {
 					Authorization: `Bearer ${process.env.WHATSAPP_ACCOUNT_ACCESS_TOKEN}`,
 					"Content-Type": "application/json",
 				},
-			}
+			},
 		);
 		console.log("WhatsApp message sent successfully:", response.data);
 		return response.data;
 	} catch (error) {
 		console.error(
 			"WhatsApp Send API Error:",
-			error.response?.data || error.message
+			error.response?.data || error.message,
 		);
 		throw error;
 	}
@@ -2360,7 +2404,7 @@ app.post("/facebook", function (req, res) {
 
 	if (!req.isXHubValid()) {
 		console.log(
-			"Warning - request header X-Hub-Signature not present or invalid"
+			"Warning - request header X-Hub-Signature not present or invalid",
 		);
 		res.sendStatus(401);
 		return;
@@ -2390,7 +2434,7 @@ app.post("/instagram", async function (req, res) {
 		} catch (dbError) {
 			console.error(
 				"Failed to connect to database, skipping message processing:",
-				dbError.message
+				dbError.message,
 			);
 			return; // Exit early if DB connection fails
 		}
@@ -2424,7 +2468,7 @@ app.post("/instagram", async function (req, res) {
 							// Check if Instagram webhook is paused for this user
 							if (user && user.instagramWebhookPaused) {
 								console.log(
-									`⏸️  Instagram webhook is paused for user ${user._id}. Message not processed.`
+									`⏸️  Instagram webhook is paused for user ${user._id}. Message not processed.`,
 								);
 								return; // Skip processing
 							}
@@ -2435,7 +2479,7 @@ app.post("/instagram", async function (req, res) {
 									userMessage,
 									senderId,
 									user._id,
-									"instagram"
+									"instagram",
 								);
 
 								// Send reply to Instagram using user's token
@@ -2445,21 +2489,21 @@ app.post("/instagram", async function (req, res) {
 										senderId,
 										aiResponse,
 										user.instagramAccessToken,
-										recipientId
+										recipientId,
 									);
 									console.log(`✅ Reply sent successfully!\n`);
 								} catch (sendError) {
 									console.log(`\n❌ Failed to send Instagram reply`);
 									console.log(
-										`💡 The user's Instagram Access Token may be expired or invalid`
+										`💡 The user's Instagram Access Token may be expired or invalid`,
 									);
 									console.log(
-										`   User needs to update their token via /api/instagram/set-access-token\n`
+										`   User needs to update their token via /api/instagram/set-access-token\n`,
 									);
 								}
 							} else {
 								console.log(
-									`⚠️  Skipping - no user found with Instagram account ID ${recipientId} or no access token set\n`
+									`⚠️  Skipping - no user found with Instagram account ID ${recipientId} or no access token set\n`,
 								);
 							}
 						}
@@ -2498,7 +2542,7 @@ app.post("/whatsapp", async function (req, res) {
 		} catch (dbError) {
 			console.error(
 				"Failed to connect to database, skipping message processing:",
-				dbError.message
+				dbError.message,
 			);
 			return; // Exit early if DB connection fails
 		}
@@ -2522,14 +2566,14 @@ app.post("/whatsapp", async function (req, res) {
 
 									// Only process if message is sent TO your account
 									console.log(
-										`   Checking recipient: ${recipientId} vs ${process.env.WHATSAPP_PHONENUM_ID}`
+										`   Checking recipient: ${recipientId} vs ${process.env.WHATSAPP_PHONENUM_ID}`,
 									);
 									if (recipientId === process.env.WHATSAPP_PHONENUM_ID) {
 										// Get AI response with conversation context
 										const aiResponse = await getOpenAIResponse(
 											userMessage,
 											senderId,
-											null
+											null,
 										);
 
 										// Send reply to WhatsApp (only if access token is configured and valid)
@@ -2546,23 +2590,23 @@ app.post("/whatsapp", async function (req, res) {
 											} catch (sendError) {
 												console.log(`\n❌ Failed to send WhatsApp reply`);
 												console.log(
-													`💡 Your WhatsApp Access Token may be expired or invalid`
+													`💡 Your WhatsApp Access Token may be expired or invalid`,
 												);
 												console.log(
-													`   Get a new token from Meta Developer Console\n`
+													`   Get a new token from Meta Developer Console\n`,
 												);
 											}
 										} else {
 											console.log(
-												`\n⚠️  WhatsApp Access Token not configured - Response displayed above only`
+												`\n⚠️  WhatsApp Access Token not configured - Response displayed above only`,
 											);
 											console.log(
-												`💡 To enable auto-replies, get a valid WhatsApp Access Token from Meta Developer Console\n`
+												`💡 To enable auto-replies, get a valid WhatsApp Access Token from Meta Developer Console\n`,
 											);
 										}
 									} else {
 										console.log(
-											`⚠️  Skipping - message not sent to our account (recipient mismatch)\n`
+											`⚠️  Skipping - message not sent to our account (recipient mismatch)\n`,
 										);
 									}
 								}
